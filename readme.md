@@ -2,7 +2,6 @@
 
 ## Directory Structure
 
-'''
 crop_monitoring_system/
 ├── docker-compose.yml # Spins up API, Postgres/PostGIS, Redis
 ├── Dockerfile # Docker build instructions for API
@@ -35,5 +34,3 @@ crop_monitoring_system/
 │ │ └── ml_engine.py # Interface to load/run TFLite/ONNX models
 │ │
 │ └── migrations/ # Alembic (DB Schema version control)
-
-'''
