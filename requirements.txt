@@ -5,3 +5,7 @@ torch
 torchvision
 python-jose[cryptography]
 passlib[argon2]
+rasterio
+numpy
+shapely
+requests

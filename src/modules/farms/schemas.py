@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, validator
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 # --- 1. GeoJSON Sub-Models ---
 
@@ -41,8 +41,22 @@ class GeoJSONPolygon(BaseModel):
 class FieldCreate(BaseModel):
     name: str = Field(..., example="North River Field")
     boundary: GeoJSONPolygon
+class NDVIStats(BaseModel):
+    mean_ndvi: float
+    status: str
+    timestamp: str
+
+class NDVIAnalysis(BaseModel):
+    tiff_url: str
+    stats: NDVIStats
 
 class FieldResponse(FieldCreate):
     id: str
     owner_id: str
     area_acres: float
+    latest_analysis: Optional[NDVIAnalysis] = None
+    analysis_history: Optional[List[NDVIAnalysis]] = []
+    
+    class config:
+        from_attributes = True
+    

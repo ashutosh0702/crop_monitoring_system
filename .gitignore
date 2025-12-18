@@ -2,3 +2,4 @@
 .env
 local_db.json
 users.txt
+data

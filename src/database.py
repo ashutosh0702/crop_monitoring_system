@@ -47,6 +47,20 @@ class JsonDatabase:
         data["fields"].append(field_data)
         self.write(data)
         return field_data
+    
+    def update_field_analysis(self, field_id: str, analysis_data: dict):
+        data = self.read()
+        updated_obj = None
+        for field in data["fields"]:
+            if field["id"] == field_id:
+                field["latest_analysis"] = analysis_data
+                if "analysis_history" not in field:
+                    field["analysis_history"] = []
+                field["analysis_history"].append(analysis_data)
+                updated_obj = field # Capture the full object
+                break
+        self.write(data)
+        return updated_obj # Return the full dict including 'name', 'id', etc.
 
 # Dependency Injection
 def get_db() -> Generator:
