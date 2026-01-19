@@ -3,6 +3,7 @@ Celery application configuration for background task processing.
 """
 
 from celery import Celery
+from celery.schedules import crontab
 from src.config import settings
 
 # Create Celery app
@@ -38,18 +39,26 @@ celery_app.conf.update(
     task_acks_late=True,  # Acknowledge after completion
     task_reject_on_worker_lost=True,  # Requeue if worker dies
     
-    # Beat scheduler for CRON jobs (Phase 3)
+    # Beat scheduler for automated scanning
     beat_schedule={
-        # Uncomment when ready for automated scanning
-        # "scan-all-farms-daily": {
-        #     "task": "src.tasks.scan_all_farms",
-        #     "schedule": crontab(hour=6, minute=0),  # 6 AM daily
-        # },
+        # Scan all farms daily at 6 AM UTC
+        "scan-all-farms-daily": {
+            "task": "src.tasks.scan_all_farms",
+            "schedule": crontab(hour=6, minute=0),
+            "options": {"queue": "ndvi_processing"},
+        },
+        # Check for NDVI drops and create alerts every 6 hours
+        "check-alerts-every-6h": {
+            "task": "src.tasks.check_alerts",
+            "schedule": crontab(hour="*/6", minute=30),
+        },
     },
 )
 
-# Optional: Task routing for different queues
+# Task routing for different queues
 celery_app.conf.task_routes = {
     "src.tasks.process_ndvi_task": {"queue": "ndvi_processing"},
     "src.tasks.fetch_satellite_imagery_task": {"queue": "satellite"},
+    "src.tasks.generate_farm_report": {"queue": "reports"},
 }
+

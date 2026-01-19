@@ -52,9 +52,13 @@ app.include_router(farms_router.router)
 from src.modules.weather import router as weather_router
 app.include_router(weather_router.router)
 
-# TODO: Add these routers as modules are implemented
-# from src.modules.alerts import router as alerts_router
-# app.include_router(alerts_router.router)
+# Tasks router (background job management)
+from src.modules.tasks import router as tasks_router
+app.include_router(tasks_router.router)
+
+# Alerts router
+from src.modules.alerts import router as alerts_router
+app.include_router(alerts_router.router)
 
 
 @app.get("/")
