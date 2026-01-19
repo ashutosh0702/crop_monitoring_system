@@ -48,10 +48,12 @@ app.add_middleware(
 app.include_router(auth_router.router)
 app.include_router(farms_router.router)
 
+# Weather router
+from src.modules.weather import router as weather_router
+app.include_router(weather_router.router)
+
 # TODO: Add these routers as modules are implemented
-# from src.modules.weather import router as weather_router
 # from src.modules.alerts import router as alerts_router
-# app.include_router(weather_router.router)
 # app.include_router(alerts_router.router)
 
 
