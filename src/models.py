@@ -55,10 +55,7 @@ class Farm(Base):
     owner = relationship("User", back_populates="farms")
     analyses = relationship("NDVIAnalysis", back_populates="farm", cascade="all, delete-orphan", order_by="desc(NDVIAnalysis.created_at)")
     
-    # Spatial index for PostGIS queries
-    __table_args__ = (
-        Index("idx_farms_boundary", boundary, postgresql_using="gist"),
-    )
+    # Note: Spatial index on 'boundary' is auto-created by GeoAlchemy2
     
     @property
     def latest_analysis(self) -> Optional["NDVIAnalysis"]:

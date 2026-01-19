@@ -32,8 +32,23 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():
-    """Initialize database tables. Call on startup."""
-    Base.metadata.create_all(bind=engine)
+    """
+    Initialize database connection check.
+    
+    NOTE: We use Alembic for schema management, not create_all().
+    Run: docker compose exec api alembic upgrade head
+    
+    This function just verifies the database connection.
+    """
+    from sqlalchemy import text
+    try:
+        # Verify connection works
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        print("✅ Database connection verified")
+    except Exception as e:
+        print(f"⚠️ Database connection failed: {e}")
+        # Don't raise - allow app to start for debugging
 
 
 def get_db() -> Generator[Session, None, None]:

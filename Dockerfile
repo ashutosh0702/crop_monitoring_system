@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Build dependencies
 # =============================================================================
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 # Install build dependencies for GDAL/rasterio
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,8 +30,10 @@ FROM python:3.11-slim
 
 # Install runtime dependencies for GDAL/PostGIS
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgdal32 \
+    libgdal-dev \
+    gdal-bin \
     libpq5 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -51,7 +51,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_index('ix_farms_owner_id', 'farms', ['owner_id'])
-    op.create_index('idx_farms_boundary', 'farms', ['boundary'], postgresql_using='gist')
+    # Note: Spatial index (idx_farms_boundary_geom) is auto-created by GeoAlchemy2
     
     # Create ndvi_analyses table
     op.create_table(
