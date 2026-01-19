@@ -1,10 +1,79 @@
+"""
+Database connection and session management.
+Supports both PostgreSQL/PostGIS (production) and legacy JSON database (migration).
+"""
+
 import json
 import os
 from typing import Generator
-from src.config import settings
+from contextlib import contextmanager
 
-# --- JSON REPOSITORY (The "Mock" DB) ---
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import QueuePool
+
+from src.config import settings
+from src.models import Base
+
+
+# =============================================================================
+# PostgreSQL Database Engine (Primary)
+# =============================================================================
+
+engine = create_engine(
+    settings.DATABASE_URL,
+    pool_size=5,
+    max_overflow=10,
+    pool_pre_ping=True,  # Verify connection before using
+    poolclass=QueuePool,
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def init_db():
+    """Initialize database tables. Call on startup."""
+    Base.metadata.create_all(bind=engine)
+
+
+def get_db() -> Generator[Session, None, None]:
+    """
+    Dependency injection for database sessions.
+    Usage in FastAPI:
+        @app.get("/items")
+        def get_items(db: Session = Depends(get_db)):
+            ...
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@contextmanager
+def get_db_session() -> Generator[Session, None, None]:
+    """Context manager for database sessions (non-FastAPI usage)."""
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+# =============================================================================
+# Legacy JSON Database (For Migration Period)
+# =============================================================================
+
 class JsonDatabase:
+    """
+    Legacy JSON-based database for backward compatibility during migration.
+    Will be removed after full PostgreSQL migration.
+    """
     def __init__(self):
         self.file_path = settings.DB_FILE
         self._ensure_db_exists()
@@ -22,9 +91,6 @@ class JsonDatabase:
         with open(self.file_path, "w") as f:
             json.dump(data, f, indent=4)
 
-    # --- SIMULATE SQLALCHEMY METHODS ---
-    # In future, these will be replaced by actual SQL queries
-    
     def get_user_by_phone(self, phone: str):
         data = self.read()
         for user in data["users"]:
@@ -57,14 +123,17 @@ class JsonDatabase:
                 if "analysis_history" not in field:
                     field["analysis_history"] = []
                 field["analysis_history"].append(analysis_data)
-                updated_obj = field # Capture the full object
+                updated_obj = field
                 break
         self.write(data)
-        return updated_obj # Return the full dict including 'name', 'id', etc.
+        return updated_obj
 
-# Dependency Injection
-def get_db() -> Generator:
-    # FUTURE: yield SessionLocal()
+
+def get_json_db() -> Generator:
+    """
+    Legacy dependency for JSON database.
+    Replace with get_db() after migration.
+    """
     db = JsonDatabase()
     try:
         yield db

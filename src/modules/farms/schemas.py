@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Literal, Optional
 
 # --- 1. GeoJSON Sub-Models ---
@@ -15,13 +15,10 @@ class GeoJSONPolygon(BaseModel):
     }
     """
     type: Literal["Polygon"] = "Polygon"
-    # Note: Triple nested list -> [ [ [lng, lat], ... ] ]
-    # Level 1: The Polygon (can have holes)
-    # Level 2: The Linear Ring (the boundary)
-    # Level 3: The Coordinate Pair [Longitude, Latitude]
     coordinates: List[List[List[float]]]
 
-    @validator("coordinates")
+    @field_validator("coordinates")
+    @classmethod
     def validate_polygon_closure(cls, v):
         if not v:
             raise ValueError("Polygon must have at least one linear ring (boundary).")
@@ -30,7 +27,6 @@ class GeoJSONPolygon(BaseModel):
         if len(outer_ring) < 4:
             raise ValueError("A Polygon LinearRing must have at least 4 points.")
         
-        # GeoJSON Rule: The first and last point must be identical to close the shape
         if outer_ring[0] != outer_ring[-1]:
             raise ValueError("The first and last coordinates must be the same to close the polygon.")
         
@@ -41,22 +37,42 @@ class GeoJSONPolygon(BaseModel):
 class FieldCreate(BaseModel):
     name: str = Field(..., example="North River Field")
     boundary: GeoJSONPolygon
+
+
 class NDVIStats(BaseModel):
+    """NDVI statistical results."""
     mean_ndvi: float
-    status: str
+    min_ndvi: Optional[float] = None
+    max_ndvi: Optional[float] = None
+    std_ndvi: Optional[float] = None
+    status: str  # HEALTHY, MODERATE, CRITICAL, DATA_MISSING
     timestamp: str
 
+
+class NDVIMetadata(BaseModel):
+    """Metadata about the satellite imagery source."""
+    satellite_source: str = "mock"
+    scene_date: Optional[str] = None
+    cloud_cover: Optional[float] = None
+
+
 class NDVIAnalysis(BaseModel):
+    """Complete NDVI analysis result."""
     tiff_url: str
+    png_url: Optional[str] = "placeholder"  # False color composite
     stats: NDVIStats
+    metadata: Optional[NDVIMetadata] = None
+
 
 class FieldResponse(FieldCreate):
+    """API response for a farm field."""
     id: str
     owner_id: str
     area_acres: float
     latest_analysis: Optional[NDVIAnalysis] = None
     analysis_history: Optional[List[NDVIAnalysis]] = []
     
-    class config:
+    class Config:
         from_attributes = True
+
     

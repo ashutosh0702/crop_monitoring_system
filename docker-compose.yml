@@ -1,0 +1,98 @@
+# Crop Monitoring System - Docker Compose
+# Usage: docker compose up -d
+
+services:
+  # FastAPI Application
+  api:
+    build: .
+    container_name: crop_monitoring_api
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/crop_monitoring
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data # Local TIFF/PNG storage
+      - ./src:/app/src:ro # Mount source for hot-reload in dev
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - crop_network
+
+  # Celery Worker for background tasks
+  celery_worker:
+    build: .
+    container_name: crop_monitoring_worker
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/crop_monitoring
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+    command: celery -A src.celery_app worker -l info -Q celery,ndvi_processing,satellite
+    networks:
+      - crop_network
+
+  # Celery Beat for scheduled tasks (Phase 3)
+  celery_beat:
+    build: .
+    container_name: crop_monitoring_beat
+    depends_on:
+      - celery_worker
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/crop_monitoring
+      - REDIS_URL=redis://redis:6379/0
+    command: celery -A src.celery_app beat -l info
+    networks:
+      - crop_network
+
+  # PostgreSQL with PostGIS
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: crop_monitoring_db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: crop_monitoring
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U user -d crop_monitoring" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crop_network
+
+  # Redis for Celery broker
+  redis:
+    image: redis:alpine
+    container_name: crop_monitoring_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - crop_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+
+networks:
+  crop_network:
+    driver: bridge

@@ -1,11 +1,54 @@
+# Web Framework
 fastapi
 uvicorn[standard]
 python-multipart
-torch
-torchvision
+mangum  # For AWS Lambda deployment
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary  # PostgreSQL driver
+geoalchemy2  # PostGIS support
+alembic  # Database migrations
+
+# Task Queue
+celery[redis]
+redis
+
+# Security
 python-jose[cryptography]
 passlib[argon2]
+
+# Geospatial Processing
 rasterio
 numpy
 shapely
+pyproj
+
+# STAC API (Satellite Data)
+pystac-client
+planetary-computer  # For Microsoft Planetary Computer STAC
+stackstac  # Lazy loading of STAC items
+
+# Environment Variables
+pydantic-settings
+python-dotenv
+
+# HTTP Client
+httpx
 requests
+
+# AWS S3 (Optional - for production)
+boto3
+
+# Image Processing (for false color composites)
+pillow
+matplotlib
+
+# Development/Testing
+pytest
+pytest-asyncio
+httpx  # For testing FastAPI
+
+# ML (legacy - can be removed if not needed)
+# torch
+# torchvision
