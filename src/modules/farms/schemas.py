@@ -1,5 +1,25 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Literal, Optional
+from datetime import datetime
+from enum import Enum
+
+
+# --- Crop Type Enum ---
+
+class CropType(str, Enum):
+    """Common crop types for agricultural monitoring."""
+    WHEAT = "wheat"
+    RICE = "rice"
+    COTTON = "cotton"
+    CORN = "corn"
+    SOYBEAN = "soybean"
+    SUGARCANE = "sugarcane"
+    VEGETABLES = "vegetables"
+    FRUITS = "fruits"
+    PULSES = "pulses"
+    OILSEEDS = "oilseeds"
+    OTHER = "other"
+
 
 # --- 1. GeoJSON Sub-Models ---
 
@@ -32,11 +52,22 @@ class GeoJSONPolygon(BaseModel):
         
         return v
 
+
 # --- 2. API Models ---
 
 class FieldCreate(BaseModel):
+    """Request model to create a new field with crop information."""
     name: str = Field(..., example="North River Field")
     boundary: GeoJSONPolygon
+    crop_type: Optional[CropType] = Field(None, example="wheat", description="Type of crop planted")
+    planting_date: Optional[datetime] = Field(None, example="2024-06-15T00:00:00", description="Date when crop was planted")
+
+
+class FieldUpdate(BaseModel):
+    """Request model to update field information."""
+    name: Optional[str] = None
+    crop_type: Optional[CropType] = None
+    planting_date: Optional[datetime] = None
 
 
 class NDVIStats(BaseModel):
@@ -64,15 +95,17 @@ class NDVIAnalysis(BaseModel):
     metadata: Optional[NDVIMetadata] = None
 
 
-class FieldResponse(FieldCreate):
+class FieldResponse(BaseModel):
     """API response for a farm field."""
     id: str
     owner_id: str
+    name: str
+    boundary: dict  # GeoJSON
+    crop_type: Optional[str] = None
+    planting_date: Optional[datetime] = None
     area_acres: float
     latest_analysis: Optional[NDVIAnalysis] = None
     analysis_history: Optional[List[NDVIAnalysis]] = []
     
     class Config:
         from_attributes = True
-
-    

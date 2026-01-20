@@ -44,6 +44,10 @@ class Farm(Base):
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     
+    # Crop information
+    crop_type = Column(String(50), nullable=True)  # e.g., "wheat", "rice", "cotton"
+    planting_date = Column(DateTime, nullable=True)  # When the crop was planted
+    
     # PostGIS geometry column - stores GeoJSON as native geometry
     boundary = Column(Geometry(geometry_type="POLYGON", srid=4326), nullable=False)
     
@@ -63,7 +67,7 @@ class Farm(Base):
         return self.analyses[0] if self.analyses else None
     
     def __repr__(self):
-        return f"<Farm(id={self.id}, name={self.name})>"
+        return f"<Farm(id={self.id}, name={self.name}, crop={self.crop_type})>"
 
 
 class NDVIAnalysis(Base):

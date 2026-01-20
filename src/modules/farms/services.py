@@ -52,11 +52,16 @@ class FarmService:
         # Note: For accurate calculation, would need to project to local CRS
         area_acres = self._calculate_area_acres(shapely_geom)
         
+        # Get crop type value (handle enum)
+        crop_type_value = field_data.crop_type.value if field_data.crop_type else None
+        
         # Create farm record
         new_farm = Farm(
             id=uuid.uuid4(),
             owner_id=uuid.UUID(user_id),
             name=field_data.name,
+            crop_type=crop_type_value,
+            planting_date=field_data.planting_date,
             boundary=postgis_geom,
             area_acres=area_acres,
         )
@@ -186,6 +191,8 @@ class FarmService:
             "owner_id": str(farm.owner_id),
             "name": farm.name,
             "boundary": boundary_geojson,
+            "crop_type": farm.crop_type,
+            "planting_date": farm.planting_date,
             "area_acres": farm.area_acres,
             "latest_analysis": latest_dict,
             "analysis_history": history,
