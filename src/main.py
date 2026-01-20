@@ -60,6 +60,10 @@ app.include_router(tasks_router.router)
 from src.modules.alerts import router as alerts_router
 app.include_router(alerts_router.router)
 
+# Crops router (NDWI, EVI, vegetation indices)
+from src.modules.crops import router as crops_router
+app.include_router(crops_router.router)
+
 
 @app.get("/")
 def root():
