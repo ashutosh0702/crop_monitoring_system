@@ -28,11 +28,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # =============================================================================
 FROM python:3.11-slim
 
-# Install runtime dependencies for GDAL/PostGIS
+# Install runtime dependencies (rasterio bundles its own GDAL)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgdal-dev \
-    gdal-bin \
     libpq5 \
+    libexpat1 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

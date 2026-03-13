@@ -3,3 +3,14 @@
 local_db.json
 users.txt
 data
+code_review.md
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.bak
+*.tmp
+*.swp
