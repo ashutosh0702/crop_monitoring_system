@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.env
+data
+.DS_Store
+code_review.md
+local_db.json
+users.txt
