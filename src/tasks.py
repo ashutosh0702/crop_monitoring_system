@@ -1,14 +1,15 @@
 """
-Celery tasks for background processing with S3 storage integration.
+Celery tasks for NDVI processing, historical index stacks, alerts, and reporting.
 """
 
-import uuid
+import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any, Dict, Optional
+import uuid
 
-from celery import shared_task
 from src.celery_app import celery_app
+from src.config import settings
 from src.database import get_db_session
 
 logger = logging.getLogger(__name__)
@@ -16,52 +17,28 @@ logger = logging.getLogger(__name__)
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
 def process_ndvi_task(self, farm_id: str, user_id: str, boundary_geojson: dict) -> Dict[str, Any]:
-    """
-    Background task for NDVI calculation.
-    
-    Args:
-        farm_id: UUID of the farm
-        user_id: UUID of the user
-        boundary_geojson: GeoJSON polygon of farm boundary
-    
-    Returns:
-        Analysis results dictionary with task status
-    """
+    """Compute NDVI for a farm and persist the resulting analysis."""
     task_id = self.request.id
-    logger.info(f"Starting NDVI task {task_id} for farm {farm_id}")
-    
+    logger.info("Starting NDVI task %s for farm %s", task_id, farm_id)
+
     try:
-        # Import here to avoid circular imports
+        from src.models import Farm, NDVIAnalysis
         from src.modules.crops.ndvi_service import NDVILogic
-        from src.models import NDVIAnalysis, Farm
-        
-        ndvi_engine = NDVILogic(use_mock=True)  # Set to False for production
-        
-        # Process NDVI (async -> sync context)
-        import asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            result = loop.run_until_complete(
-                ndvi_engine.process_field_ndvi(
-                    user_id=user_id,
-                    farm_id=farm_id,
-                    geojson_boundary=boundary_geojson
-                )
-            )
-        finally:
-            loop.close()
-        
-        # Store results in database
+
+        ndvi_engine = NDVILogic(use_mock=settings.SATELLITE_USE_MOCK_DATA)
+        result = ndvi_engine.process_field_ndvi(
+            user_id=user_id,
+            farm_id=farm_id,
+            geojson_boundary=boundary_geojson,
+        )
+
         with get_db_session() as db:
             farm = db.query(Farm).filter(Farm.id == farm_id).first()
-            if not farm:
+            if farm is None:
                 return {"status": "error", "message": "Farm not found"}
-            
+
             stats = result.get("stats", {})
             metadata = result.get("metadata", {})
-            
             analysis = NDVIAnalysis(
                 id=uuid.uuid4(),
                 farm_id=uuid.UUID(farm_id),
@@ -73,12 +50,13 @@ def process_ndvi_task(self, farm_id: str, user_id: str, boundary_geojson: dict) 
                 std_ndvi=stats.get("std_ndvi"),
                 status=stats.get("status", "DATA_MISSING"),
                 satellite_source=metadata.get("satellite_source", "mock"),
+                scene_date=_parse_datetime(metadata.get("scene_date")),
+                cloud_cover=metadata.get("cloud_cover"),
             )
             db.add(analysis)
-            db.commit()
-            
-            logger.info(f"NDVI task {task_id} completed for farm {farm_id}")
-            
+            db.flush()
+
+            logger.info("NDVI task %s completed for farm %s", task_id, farm_id)
             return {
                 "status": "completed",
                 "task_id": task_id,
@@ -89,35 +67,64 @@ def process_ndvi_task(self, farm_id: str, user_id: str, boundary_geojson: dict) 
                     "png_url": result.get("png_url"),
                     "mean_ndvi": stats.get("mean_ndvi"),
                     "status": stats.get("status"),
-                }
+                },
             }
-        
     except Exception as exc:
-        logger.error(f"NDVI task {task_id} failed: {exc}")
+        logger.error("NDVI task %s failed: %s", task_id, exc)
+        raise self.retry(exc=exc)
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=120)
+def build_index_stacks_task(
+    self,
+    farm_id: str,
+    user_id: str,
+    boundary_geojson: dict,
+    max_scenes: int = 5,
+) -> Dict[str, Any]:
+    """Build and persist a stack of vegetation indices for recent scene dates."""
+    task_id = self.request.id
+    logger.info("Starting index stack task %s for farm %s", task_id, farm_id)
+
+    try:
+        from src.modules.crops.indices_service import get_indices_service
+        from src.modules.crops.stack_service import CropIndexStackService
+
+        indices_service = get_indices_service(use_mock=settings.SATELLITE_USE_MOCK_DATA)
+        result = indices_service.build_index_stacks(
+            user_id=user_id,
+            farm_id=farm_id,
+            geojson_boundary=boundary_geojson,
+            max_scenes=max_scenes,
+        )
+        if result.get("status") == "NO_SATELLITE_DATA":
+            return result
+
+        with get_db_session() as db:
+            stack_service = CropIndexStackService(db)
+            persisted = stack_service.save_many(farm_id, result["stacks"])
+            return {
+                "status": "completed",
+                "task_id": task_id,
+                "farm_id": farm_id,
+                "stacks_created": len(persisted),
+                "scene_dates": [stack["scene_date"] for stack in persisted],
+            }
+    except Exception as exc:
+        logger.error("Index stack task %s failed: %s", task_id, exc)
         raise self.retry(exc=exc)
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=120)
 def fetch_satellite_imagery_task(self, farm_id: str, bbox: list) -> Dict[str, Any]:
-    """
-    Background task to fetch satellite imagery from STAC API.
-    
-    Args:
-        farm_id: UUID of the farm
-        bbox: Bounding box [minx, miny, maxx, maxy]
-    
-    Returns:
-        Dictionary with imagery URLs and metadata
-    """
+    """Search for recent scenes intersecting the farm bbox."""
     task_id = self.request.id
-    logger.info(f"Starting satellite fetch task {task_id} for farm {farm_id}")
-    
+    logger.info("Starting satellite fetch task %s for farm %s", task_id, farm_id)
+
     try:
         from src.modules.crops.stac_client import get_stac_client
-        
-        client = get_stac_client(use_mock=False)
-        
-        # Create geometry from bbox
+
+        client = get_stac_client(use_mock=settings.SATELLITE_USE_MOCK_DATA)
         geometry = {
             "type": "Polygon",
             "coordinates": [[
@@ -126,21 +133,19 @@ def fetch_satellite_imagery_task(self, farm_id: str, bbox: list) -> Dict[str, An
                 [bbox[2], bbox[3]],
                 [bbox[0], bbox[3]],
                 [bbox[0], bbox[1]],
-            ]]
+            ]],
         }
-        
         scenes = client.search_scenes(
             geometry=geometry,
             max_cloud_cover=30.0,
-            limit=5
+            limit=5,
         )
-        
         if not scenes:
             return {
                 "status": "no_data",
-                "message": "No satellite scenes found for this location"
+                "message": "No satellite scenes found for this location",
             }
-        
+
         return {
             "status": "completed",
             "task_id": task_id,
@@ -150,174 +155,167 @@ def fetch_satellite_imagery_task(self, farm_id: str, bbox: list) -> Dict[str, An
                 "id": scenes[0].id,
                 "datetime": scenes[0].datetime.isoformat() if scenes[0].datetime else None,
                 "cloud_cover": scenes[0].cloud_cover,
-            }
+            },
         }
-        
     except Exception as exc:
-        logger.error(f"Satellite fetch task {task_id} failed: {exc}")
+        logger.error("Satellite fetch task %s failed: %s", task_id, exc)
         raise self.retry(exc=exc)
 
 
 @celery_app.task
-def scan_all_farms() -> Dict[str, Any]:
-    """
-    Scheduled task to scan all active farms for updated NDVI.
-    Called by Celery Beat on schedule.
-    
-    Returns:
-        Summary of farms scanned and tasks queued
-    """
-    logger.info("Starting scheduled farm scan")
-    
+def scan_all_farms(owner_id: Optional[str] = None) -> Dict[str, Any]:
+    """Queue NDVI analysis for all farms or just one owner's farms."""
+    logger.info("Starting farm scan for owner_id=%s", owner_id)
+
     try:
-        from src.models import Farm
         from geoalchemy2.shape import to_shape
         from shapely.geometry import mapping
-        
+        from src.models import Farm
+
         farms_queued = 0
-        
         with get_db_session() as db:
-            # Get all farms
-            farms = db.query(Farm).all()
-            
+            query = db.query(Farm)
+            if owner_id:
+                query = query.filter(Farm.owner_id == uuid.UUID(owner_id))
+            farms = query.all()
+
             for farm in farms:
-                # Get boundary as GeoJSON
-                shapely_geom = to_shape(farm.boundary)
-                boundary_geojson = mapping(shapely_geom)
-                
-                # Queue NDVI task
+                boundary_geojson = mapping(to_shape(farm.boundary))
                 process_ndvi_task.delay(
                     farm_id=str(farm.id),
                     user_id=str(farm.owner_id),
-                    boundary_geojson=boundary_geojson
+                    boundary_geojson=boundary_geojson,
                 )
                 farms_queued += 1
-        
-        logger.info(f"Scheduled scan queued {farms_queued} farms")
-        
+
         return {
             "status": "completed",
             "farms_scanned": farms_queued,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        
     except Exception as exc:
-        logger.error(f"Scheduled scan failed: {exc}")
+        logger.error("Farm scan failed: %s", exc)
         return {"status": "error", "message": str(exc)}
 
 
 @celery_app.task
-def check_alerts() -> Dict[str, Any]:
-    """
-    Check farms for NDVI drops and generate alerts.
-    Compares latest analysis with previous to detect significant changes.
-    """
-    logger.info("Starting alert check")
-    
+def check_alerts(owner_id: Optional[str] = None) -> Dict[str, Any]:
+    """Create NDVI drop alerts for all farms or one owner's farms."""
+    logger.info("Starting alert check for owner_id=%s", owner_id)
+
     try:
-        from src.models import Farm, NDVIAnalysis, Alert
-        
+        from src.models import Alert, Farm, NDVIAnalysis
+
         alerts_created = 0
-        NDVI_DROP_THRESHOLD = 0.15  # Alert if NDVI drops more than this
-        
+        threshold = 0.15
+
         with get_db_session() as db:
-            farms = db.query(Farm).all()
-            
+            query = db.query(Farm)
+            if owner_id:
+                query = query.filter(Farm.owner_id == uuid.UUID(owner_id))
+            farms = query.all()
+
             for farm in farms:
-                analyses = db.query(NDVIAnalysis).filter(
-                    NDVIAnalysis.farm_id == farm.id
-                ).order_by(NDVIAnalysis.created_at.desc()).limit(2).all()
-                
+                analyses = (
+                    db.query(NDVIAnalysis)
+                    .filter(NDVIAnalysis.farm_id == farm.id)
+                    .order_by(NDVIAnalysis.created_at.desc())
+                    .limit(2)
+                    .all()
+                )
                 if len(analyses) < 2:
-                    continue  # Need at least 2 analyses to compare
-                
+                    continue
+
                 latest = analyses[0]
                 previous = analyses[1]
-                
                 ndvi_change = previous.mean_ndvi - latest.mean_ndvi
-                
-                if ndvi_change > NDVI_DROP_THRESHOLD:
-                    # Significant NDVI drop - create alert
-                    alert = Alert(
+                if ndvi_change <= threshold:
+                    continue
+
+                message = (
+                    f"NDVI dropped by {ndvi_change:.2f} "
+                    f"from {previous.mean_ndvi:.2f} to {latest.mean_ndvi:.2f}"
+                )
+                existing = (
+                    db.query(Alert)
+                    .filter(
+                        Alert.farm_id == farm.id,
+                        Alert.alert_type == "NDVI_DROP",
+                        Alert.message == message,
+                    )
+                    .first()
+                )
+                if existing:
+                    continue
+
+                db.add(
+                    Alert(
                         id=uuid.uuid4(),
                         farm_id=farm.id,
                         alert_type="NDVI_DROP",
                         severity="HIGH" if ndvi_change > 0.25 else "MEDIUM",
-                        message=f"NDVI dropped by {ndvi_change:.2f} from {previous.mean_ndvi:.2f} to {latest.mean_ndvi:.2f}",
+                        message=message,
                         is_read=False,
                     )
-                    db.add(alert)
-                    alerts_created += 1
-            
-            db.commit()
-        
-        logger.info(f"Alert check created {alerts_created} alerts")
-        
+                )
+                alerts_created += 1
+
         return {
             "status": "completed",
             "alerts_created": alerts_created,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        
     except Exception as exc:
-        logger.error(f"Alert check failed: {exc}")
+        logger.error("Alert check failed: %s", exc)
         return {"status": "error", "message": str(exc)}
 
 
 @celery_app.task
 def generate_farm_report(farm_id: str) -> Dict[str, Any]:
-    """
-    Generate a comprehensive report for a farm.
-    Includes NDVI trends, weather data, and recommendations.
-    """
-    logger.info(f"Generating report for farm {farm_id}")
-    
+    """Generate a farm report using recent NDVI history and current weather."""
+    logger.info("Generating report for farm %s", farm_id)
+
     try:
+        from geoalchemy2.shape import to_shape
         from src.models import Farm, NDVIAnalysis
         from src.modules.weather.weather_client import get_weather_client
-        from geoalchemy2.shape import to_shape
-        import asyncio
-        
+
         with get_db_session() as db:
             farm = db.query(Farm).filter(Farm.id == farm_id).first()
-            if not farm:
+            if farm is None:
                 return {"status": "error", "message": "Farm not found"}
-            
-            # Get NDVI history
-            analyses = db.query(NDVIAnalysis).filter(
-                NDVIAnalysis.farm_id == farm.id
-            ).order_by(NDVIAnalysis.created_at.desc()).limit(10).all()
-            
-            # Get farm centroid for weather
-            shapely_geom = to_shape(farm.boundary)
-            centroid = shapely_geom.centroid
-            
-            # Fetch weather
+
+            analyses = (
+                db.query(NDVIAnalysis)
+                .filter(NDVIAnalysis.farm_id == farm.id)
+                .order_by(NDVIAnalysis.created_at.desc())
+                .limit(10)
+                .all()
+            )
+
+            centroid = to_shape(farm.boundary).centroid
             weather_client = get_weather_client()
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            try:
-                current = loop.run_until_complete(
-                    weather_client.get_current_weather(centroid.y, centroid.x)
-                )
-                forecast = loop.run_until_complete(
-                    weather_client.get_forecast(centroid.y, centroid.x, 5)
-                )
-            finally:
-                loop.close()
-            
-            # Generate insights
+
+            async def _load_weather():
+                current_weather = await weather_client.get_current_weather(centroid.y, centroid.x)
+                forecast_data = await weather_client.get_forecast(centroid.y, centroid.x, 5)
+                return current_weather, forecast_data
+
+            current, forecast = asyncio.run(_load_weather())
             insights = weather_client.get_agricultural_insights(current, forecast)
-            
+
             return {
                 "status": "completed",
                 "farm_id": farm_id,
                 "farm_name": farm.name,
                 "area_acres": farm.area_acres,
                 "ndvi_history": [
-                    {"date": a.created_at.isoformat(), "mean_ndvi": a.mean_ndvi, "status": a.status}
-                    for a in analyses
+                    {
+                        "date": analysis.created_at.isoformat(),
+                        "mean_ndvi": analysis.mean_ndvi,
+                        "status": analysis.status,
+                    }
+                    for analysis in analyses
                 ],
                 "current_weather": {
                     "temperature": current.temperature,
@@ -325,9 +323,14 @@ def generate_farm_report(farm_id: str) -> Dict[str, Any]:
                     "description": current.description,
                 },
                 "recommendations": insights.get("recommendations", []),
-                "generated_at": datetime.utcnow().isoformat()
+                "generated_at": datetime.utcnow().isoformat(),
             }
-        
     except Exception as exc:
-        logger.error(f"Report generation failed: {exc}")
+        logger.error("Report generation failed: %s", exc)
         return {"status": "error", "message": str(exc)}
+
+
+def _parse_datetime(value: Optional[str]):
+    if not value:
+        return None
+    return value if hasattr(value, "isoformat") else datetime.fromisoformat(value)

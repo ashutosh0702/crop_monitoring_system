@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
 from functools import lru_cache
@@ -35,12 +34,18 @@ class Settings(BaseSettings):
     BASE_DIR: Path = Path(__file__).resolve().parent.parent
     TIFF_STORAGE_PATH: Path = BASE_DIR / "data" / "ndvi_tiffs"
     PNG_STORAGE_PATH: Path = BASE_DIR / "data" / "false_color"
-    
+    INDEX_STACK_STORAGE_PATH: Path = BASE_DIR / "data" / "index_stacks"
+
     # Legacy - for backward compatibility during migration
     DB_FILE: str = "local_db.json"
-    
+
     # Environment mode
     ENVIRONMENT: str = "development"  # development, staging, production
+
+    # Satellite processing
+    SATELLITE_USE_MOCK_DATA: bool = False
+    INDEX_CALCULATION_THREADS: int = 5
+    INDEX_STACK_SCENE_LIMIT: int = 5
     
     @property
     def is_production(self) -> bool:

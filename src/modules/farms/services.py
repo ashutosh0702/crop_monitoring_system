@@ -2,6 +2,7 @@
 Farm management service using PostgreSQL with PostGIS.
 """
 
+from datetime import datetime
 import uuid
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -10,7 +11,7 @@ from fastapi import HTTPException
 from geoalchemy2.shape import from_shape, to_shape
 from shapely.geometry import shape, mapping
 
-from src.models import Farm, NDVIAnalysis, User
+from src.models import Farm, NDVIAnalysis
 
 
 class FarmService:
@@ -79,9 +80,6 @@ class FarmService:
         """
         # Approximate using WGS84 degrees to square meters
         # 1 degree lat ≈ 111,320 meters, 1 degree lon varies
-        bounds = geom.bounds
-        lat = (bounds[1] + bounds[3]) / 2
-        
         # Approximate using pyproj for better accuracy
         try:
             import pyproj
@@ -109,16 +107,22 @@ class FarmService:
         Returns:
             List of farm dictionaries with analysis data
         """
-        farms = self.db.query(Farm).filter(
-            Farm.owner_id == user_id
-        ).order_by(Farm.created_at.desc()).all()
-        
-        result = []
-        for farm in farms:
-            farm_dict = self._farm_to_dict(farm)
-            result.append(farm_dict)
-        
-        return result
+        farms = (
+            self.db.query(Farm)
+            .filter(Farm.owner_id == user_id)
+            .order_by(Farm.created_at.desc())
+            .all()
+        )
+        latest_analysis_map = self._get_latest_analysis_map([farm.id for farm in farms])
+
+        return [
+            self._farm_to_dict(
+                farm,
+                latest_analysis=latest_analysis_map.get(farm.id),
+                include_history=False,
+            )
+            for farm in farms
+        ]
     
     def get_field_by_id(self, farm_id: str, user_id: str) -> Optional[Farm]:
         """Get a specific farm by ID, ensuring ownership."""
@@ -157,6 +161,8 @@ class FarmService:
             std_ndvi=stats.get("std_ndvi"),
             status=stats.get("status", "DATA_MISSING"),
             satellite_source=metadata.get("satellite_source", "mock"),
+            scene_date=self._parse_datetime(metadata.get("scene_date")),
+            cloud_cover=metadata.get("cloud_cover"),
         )
         
         self.db.add(analysis)
@@ -173,18 +179,23 @@ class FarmService:
         
         return [a.to_dict() for a in analyses]
     
-    def _farm_to_dict(self, farm: Farm) -> Dict[str, Any]:
+    def _farm_to_dict(
+        self,
+        farm: Farm,
+        latest_analysis: Optional[NDVIAnalysis] = None,
+        include_history: bool = True,
+    ) -> Dict[str, Any]:
         """Convert Farm model to dictionary for API response."""
         # Convert PostGIS geometry to GeoJSON
         shapely_geom = to_shape(farm.boundary)
         boundary_geojson = mapping(shapely_geom)
         
         # Get latest analysis
-        latest = farm.latest_analysis
+        latest = latest_analysis if latest_analysis is not None else farm.latest_analysis
         latest_dict = latest.to_dict() if latest else None
         
         # Get analysis history
-        history = [a.to_dict() for a in farm.analyses] if farm.analyses else []
+        history = [a.to_dict() for a in farm.analyses] if include_history and farm.analyses else []
         
         return {
             "id": str(farm.id),
@@ -197,3 +208,33 @@ class FarmService:
             "latest_analysis": latest_dict,
             "analysis_history": history,
         }
+
+    def _get_latest_analysis_map(self, farm_ids: List[Any]) -> Dict[Any, NDVIAnalysis]:
+        if not farm_ids:
+            return {}
+
+        latest_subquery = (
+            self.db.query(
+                NDVIAnalysis.farm_id.label("farm_id"),
+                func.max(NDVIAnalysis.created_at).label("latest_created_at"),
+            )
+            .filter(NDVIAnalysis.farm_id.in_(farm_ids))
+            .group_by(NDVIAnalysis.farm_id)
+            .subquery()
+        )
+
+        analyses = (
+            self.db.query(NDVIAnalysis)
+            .join(
+                latest_subquery,
+                (NDVIAnalysis.farm_id == latest_subquery.c.farm_id)
+                & (NDVIAnalysis.created_at == latest_subquery.c.latest_created_at),
+            )
+            .all()
+        )
+        return {analysis.farm_id: analysis for analysis in analyses}
+
+    def _parse_datetime(self, value: Optional[str]):
+        if not value:
+            return None
+        return value if isinstance(value, datetime) else datetime.fromisoformat(value)

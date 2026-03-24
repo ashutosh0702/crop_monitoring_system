@@ -39,7 +39,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./data:/app/data
-    command: celery -A src.celery_app worker -l info -Q celery,ndvi_processing,satellite
+    command: celery -A src.celery_app worker -l info -Q celery,ndvi_processing,index_stacks,satellite,reports
     networks:
       - crop_network
 

@@ -3,48 +3,17 @@ Alerts router for NDVI threshold monitoring and notifications.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
 
 from src.database import get_db
 from src.models import User, Farm, Alert
+from src.modules.auth.dependencies import get_current_user
 from src.modules.alerts import schemas
 
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
-
-
-def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
-) -> User:
-    """Get current authenticated user from JWT token."""
-    from src.core import security
-    
-    try:
-        payload = security.jwt.decode(
-            token,
-            security.settings.SECRET_KEY,
-            algorithms=[security.settings.ALGORITHM]
-        )
-        phone = payload.get("sub")
-        if phone is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except Exception:
-        raise HTTPException(
-            status_code=401,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    user = db.query(User).filter(User.phone_number == phone).first()
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    return user
 
 
 @router.get("/", response_model=List[schemas.AlertResponse])

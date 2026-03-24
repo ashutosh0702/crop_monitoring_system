@@ -58,7 +58,7 @@ celery_app.conf.update(
 # Task routing for different queues
 celery_app.conf.task_routes = {
     "src.tasks.process_ndvi_task": {"queue": "ndvi_processing"},
+    "src.tasks.build_index_stacks_task": {"queue": "index_stacks"},
     "src.tasks.fetch_satellite_imagery_task": {"queue": "satellite"},
     "src.tasks.generate_farm_report": {"queue": "reports"},
 }
-

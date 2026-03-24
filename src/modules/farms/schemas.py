@@ -105,7 +105,7 @@ class FieldResponse(BaseModel):
     planting_date: Optional[datetime] = None
     area_acres: float
     latest_analysis: Optional[NDVIAnalysis] = None
-    analysis_history: Optional[List[NDVIAnalysis]] = []
+    analysis_history: List[NDVIAnalysis] = Field(default_factory=list)
     
     class Config:
         from_attributes = True

@@ -45,7 +45,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .
 
 # Create data directories
-RUN mkdir -p /app/data/ndvi_tiffs /app/data/false_color
+RUN mkdir -p /app/data/ndvi_tiffs /app/data/false_color /app/data/index_stacks
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser && \

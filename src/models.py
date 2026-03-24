@@ -4,12 +4,10 @@ These models replace the JSON-based storage with proper database schema.
 """
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 import uuid
 
-from sqlalchemy import (
-    Column, String, Float, Boolean, DateTime, ForeignKey, Text, Index
-)
+from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship, declarative_base
 from geoalchemy2 import Geometry
@@ -58,6 +56,12 @@ class Farm(Base):
     # Relationships
     owner = relationship("User", back_populates="farms")
     analyses = relationship("NDVIAnalysis", back_populates="farm", cascade="all, delete-orphan", order_by="desc(NDVIAnalysis.created_at)")
+    index_stacks = relationship(
+        "CropIndexStack",
+        back_populates="farm",
+        cascade="all, delete-orphan",
+        order_by="desc(CropIndexStack.scene_date)",
+    )
     
     # Note: Spatial index on 'boundary' is auto-created by GeoAlchemy2
     
@@ -110,14 +114,18 @@ class NDVIAnalysis(Base):
             "tiff_url": self.tiff_url,
             "png_url": self.png_url,
             "stats": {
-                "mean_ndvi": round(self.mean_ndvi, 3) if self.mean_ndvi else None,
-                "min_ndvi": round(self.min_ndvi, 3) if self.min_ndvi else None,
-                "max_ndvi": round(self.max_ndvi, 3) if self.max_ndvi else None,
+                "mean_ndvi": round(self.mean_ndvi, 3) if self.mean_ndvi is not None else None,
+                "min_ndvi": round(self.min_ndvi, 3) if self.min_ndvi is not None else None,
+                "max_ndvi": round(self.max_ndvi, 3) if self.max_ndvi is not None else None,
+                "std_ndvi": round(self.std_ndvi, 3) if self.std_ndvi is not None else None,
                 "status": self.status,
                 "timestamp": self.created_at.isoformat() if self.created_at else None,
             },
-            "satellite_source": self.satellite_source,
-            "scene_date": self.scene_date.isoformat() if self.scene_date else None,
+            "metadata": {
+                "satellite_source": self.satellite_source,
+                "scene_date": self.scene_date.isoformat() if self.scene_date else None,
+                "cloud_cover": round(self.cloud_cover, 3) if self.cloud_cover is not None else None,
+            },
         }
 
 
@@ -140,3 +148,68 @@ class Alert(Base):
     
     def __repr__(self):
         return f"<Alert(id={self.id}, type={self.alert_type}, severity={self.severity})>"
+
+
+class CropIndexStack(Base):
+    """Persisted multi-band vegetation index stack for a farm scene date."""
+
+    __tablename__ = "crop_index_stacks"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "scene_date", "satellite_source", name="uq_crop_index_stacks_farm_scene_source"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    farm_id = Column(UUID(as_uuid=True), ForeignKey("farms.id"), nullable=False, index=True)
+    scene_date = Column(DateTime, nullable=False, index=True)
+
+    stack_tiff_url = Column(Text, nullable=False)
+    indices = Column(JSON, nullable=False)
+    band_order = Column(JSON, nullable=False)
+
+    satellite_source = Column(String(50), nullable=False, default="sentinel-2")
+    cloud_cover = Column(Float, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    farm = relationship("Farm", back_populates="index_stacks")
+
+    def __repr__(self):
+        return f"<CropIndexStack(id={self.id}, farm_id={self.farm_id}, scene_date={self.scene_date})>"
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "farm_id": str(self.farm_id),
+            "scene_date": self.scene_date.isoformat() if self.scene_date else None,
+            "timestamp": self.created_at.isoformat() if self.created_at else None,
+            "indices": self.indices,
+            "summary": self._build_summary(),
+            "source": self.satellite_source,
+            "stack_tiff_url": self.stack_tiff_url,
+            "band_order": self.band_order,
+            "cloud_cover": round(self.cloud_cover, 3) if self.cloud_cover is not None else None,
+        }
+
+    def _build_summary(self) -> dict:
+        ndvi_mean = (self.indices.get("NDVI") or {}).get("mean")
+        ndmi_mean = (self.indices.get("NDMI") or {}).get("mean")
+        evi_mean = (self.indices.get("EVI") or {}).get("mean")
+
+        recommendations = []
+        if ndvi_mean is not None and ndvi_mean < 0.3:
+            recommendations.append("Low vegetation detected - inspect crop vigor")
+        elif ndvi_mean is not None and ndvi_mean > 0.6:
+            recommendations.append("Dense healthy vegetation - maintain current practices")
+
+        if ndmi_mean is not None and ndmi_mean < 0:
+            recommendations.append("Moisture stress detected - irrigation recommended")
+        elif ndmi_mean is not None and ndmi_mean > 0.2:
+            recommendations.append("Good canopy moisture levels")
+
+        return {
+            "overall_health": "GOOD" if ndvi_mean is not None and ndmi_mean is not None and ndvi_mean > 0.4 and ndmi_mean > 0 else "MODERATE" if ndvi_mean is not None and ndvi_mean > 0.25 else "POOR",
+            "moisture_status": "ADEQUATE" if ndmi_mean is not None and ndmi_mean > 0 else "STRESSED",
+            "vegetation_density": "HIGH" if evi_mean is not None and evi_mean > 0.4 else "MODERATE" if evi_mean is not None and evi_mean > 0.2 else "LOW",
+            "recommendations": recommendations,
+        }
