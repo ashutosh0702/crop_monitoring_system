@@ -1,14 +1,17 @@
 """
-Advanced Agricultural Indices Service.
-Calculates NDWI, EVI, and other vegetation/moisture indices.
+Vegetation index service that creates aligned multi-band stacks per farm scene date.
 """
 
 import logging
-from typing import Dict, Any, Optional, Tuple
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import numpy as np
+import rasterio
+from rasterio.transform import from_bounds
+from shapely.geometry import shape
 
 from src.config import settings
 
@@ -16,54 +19,44 @@ logger = logging.getLogger(__name__)
 
 
 class IndicesService:
-    """
-    Service for calculating advanced agricultural indices.
-    
-    Supported Indices:
-    - NDWI: Normalized Difference Water Index (moisture monitoring)
-    - EVI: Enhanced Vegetation Index (dense vegetation)
-    - SAVI: Soil Adjusted Vegetation Index
-    - NDRE: Normalized Difference Red Edge (chlorophyll content)
-    """
-    
-    def __init__(self, use_mock: bool = True):
-        """
-        Initialize indices service.
-        
-        Args:
-            use_mock: Use mock data instead of real satellite bands
-        """
+    """Compute and persist NDVI/SAVI/NDMI/NDRE/EVI stacks from aligned scene bands."""
+
+    INDEX_ORDER = ["NDVI", "SAVI", "NDMI", "NDRE", "EVI"]
+
+    def __init__(self, use_mock: bool = False):
         self.use_mock = use_mock
-        self.output_dir = settings.TIFF_STORAGE_PATH
+        self.output_dir = settings.INDEX_STACK_STORAGE_PATH
         self.output_dir.mkdir(parents=True, exist_ok=True)
-    
-    def calculate_ndwi(
-        self,
-        nir_band: np.ndarray,
-        swir_band: np.ndarray
-    ) -> np.ndarray:
-        """
-        Calculate Normalized Difference Water Index (NDWI).
-        
-        NDWI = (NIR - SWIR) / (NIR + SWIR)
-        
-        Interpretation:
-        - High values (>0.3): High water content, healthy vegetation
-        - Low/negative values: Water stress, dry conditions
-        
-        Args:
-            nir_band: Near-infrared band (Sentinel-2 B08)
-            swir_band: Short-wave infrared band (Sentinel-2 B11)
-            
-        Returns:
-            NDWI array with values from -1 to 1
-        """
-        with np.errstate(divide='ignore', invalid='ignore'):
-            ndwi = (nir_band.astype(float) - swir_band.astype(float)) / \
-                   (nir_band.astype(float) + swir_band.astype(float))
-            ndwi = np.where(np.isfinite(ndwi), ndwi, 0)
-        return ndwi
-    
+        self.max_workers = max(1, settings.INDEX_CALCULATION_THREADS)
+
+    def calculate_ndvi(self, nir_band: np.ndarray, red_band: np.ndarray) -> np.ndarray:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            result = (nir_band.astype(np.float32) - red_band.astype(np.float32)) / (
+                nir_band.astype(np.float32) + red_band.astype(np.float32)
+            )
+        return np.where(np.isfinite(result), result, np.nan).astype(np.float32)
+
+    def calculate_savi(self, nir_band: np.ndarray, red_band: np.ndarray, l: float = 0.5) -> np.ndarray:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            nir = nir_band.astype(np.float32)
+            red = red_band.astype(np.float32)
+            result = ((nir - red) / (nir + red + l)) * (1 + l)
+        return np.where(np.isfinite(result), result, np.nan).astype(np.float32)
+
+    def calculate_ndmi(self, nir_band: np.ndarray, swir1_band: np.ndarray) -> np.ndarray:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            nir = nir_band.astype(np.float32)
+            swir = swir1_band.astype(np.float32)
+            result = (nir - swir) / (nir + swir)
+        return np.where(np.isfinite(result), result, np.nan).astype(np.float32)
+
+    def calculate_ndre(self, nir_band: np.ndarray, red_edge_band: np.ndarray) -> np.ndarray:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            nir = nir_band.astype(np.float32)
+            red_edge = red_edge_band.astype(np.float32)
+            result = (nir - red_edge) / (nir + red_edge)
+        return np.where(np.isfinite(result), result, np.nan).astype(np.float32)
+
     def calculate_evi(
         self,
         nir_band: np.ndarray,
@@ -72,117 +65,19 @@ class IndicesService:
         gain: float = 2.5,
         c1: float = 6.0,
         c2: float = 7.5,
-        l: float = 1.0
+        l: float = 1.0,
     ) -> np.ndarray:
-        """
-        Calculate Enhanced Vegetation Index (EVI).
-        
-        EVI = G * ((NIR - RED) / (NIR + C1*RED - C2*BLUE + L))
-        
-        Better than NDVI for:
-        - Dense vegetation (reduces saturation)
-        - Areas with significant atmospheric aerosols
-        - Canopy background variations
-        
-        Args:
-            nir_band: Near-infrared band (Sentinel-2 B08)
-            red_band: Red band (Sentinel-2 B04)
-            blue_band: Blue band (Sentinel-2 B02)
-            gain: Gain factor (default 2.5)
-            c1: Aerosol resistance coefficient (default 6.0)
-            c2: Aerosol resistance coefficient (default 7.5)
-            l: Canopy background adjustment (default 1.0)
-            
-        Returns:
-            EVI array (typically 0 to 1 for vegetation)
-        """
-        with np.errstate(divide='ignore', invalid='ignore'):
-            nir = nir_band.astype(float)
-            red = red_band.astype(float)
-            blue = blue_band.astype(float)
-            
+        with np.errstate(divide="ignore", invalid="ignore"):
+            nir = nir_band.astype(np.float32)
+            red = red_band.astype(np.float32)
+            blue = blue_band.astype(np.float32)
             denominator = nir + c1 * red - c2 * blue + l
-            evi = gain * (nir - red) / denominator
-            
-            # Clip to reasonable range
-            evi = np.clip(evi, -1, 1)
-            evi = np.where(np.isfinite(evi), evi, 0)
-        
-        return evi
-    
-    def calculate_savi(
-        self,
-        nir_band: np.ndarray,
-        red_band: np.ndarray,
-        l: float = 0.5
-    ) -> np.ndarray:
-        """
-        Calculate Soil Adjusted Vegetation Index (SAVI).
-        
-        SAVI = ((NIR - RED) / (NIR + RED + L)) * (1 + L)
-        
-        Minimizes soil brightness influences.
-        L factor: 0 = high vegetation, 1 = low vegetation
-        
-        Args:
-            nir_band: Near-infrared band
-            red_band: Red band
-            l: Soil brightness correction factor (default 0.5)
-            
-        Returns:
-            SAVI array
-        """
-        with np.errstate(divide='ignore', invalid='ignore'):
-            nir = nir_band.astype(float)
-            red = red_band.astype(float)
-            
-            savi = ((nir - red) / (nir + red + l)) * (1 + l)
-            savi = np.where(np.isfinite(savi), savi, 0)
-        
-        return savi
-    
-    def calculate_ndre(
-        self,
-        nir_band: np.ndarray,
-        red_edge_band: np.ndarray
-    ) -> np.ndarray:
-        """
-        Calculate Normalized Difference Red Edge Index (NDRE).
-        
-        NDRE = (NIR - RedEdge) / (NIR + RedEdge)
-        
-        Sensitive to chlorophyll content in leaves.
-        Better than NDVI for mid-late season crops.
-        
-        Args:
-            nir_band: Near-infrared band (Sentinel-2 B08)
-            red_edge_band: Red edge band (Sentinel-2 B05 or B06)
-            
-        Returns:
-            NDRE array
-        """
-        with np.errstate(divide='ignore', invalid='ignore'):
-            nir = nir_band.astype(float)
-            red_edge = red_edge_band.astype(float)
-            
-            ndre = (nir - red_edge) / (nir + red_edge)
-            ndre = np.where(np.isfinite(ndre), ndre, 0)
-        
-        return ndre
-    
+            result = gain * (nir - red) / denominator
+        clipped = np.clip(result, -1, 1)
+        return np.where(np.isfinite(clipped), clipped, np.nan).astype(np.float32)
+
     def get_index_stats(self, index_array: np.ndarray, index_name: str) -> Dict[str, Any]:
-        """
-        Calculate statistics for an index array.
-        
-        Args:
-            index_array: The calculated index values
-            index_name: Name of the index (NDWI, EVI, etc.)
-            
-        Returns:
-            Dictionary with statistics
-        """
         valid_data = index_array[~np.isnan(index_array)]
-        
         if valid_data.size == 0:
             return {
                 "index_name": index_name,
@@ -190,13 +85,11 @@ class IndicesService:
                 "min": None,
                 "max": None,
                 "std": None,
-                "status": "NO_DATA"
+                "status": "NO_DATA",
             }
-        
+
         mean_val = float(np.mean(valid_data))
-        
-        # Status classification based on index type
-        if index_name == "NDWI":
+        if index_name == "NDMI":
             if mean_val > 0.2:
                 status = "ADEQUATE_MOISTURE"
             elif mean_val > 0:
@@ -212,144 +105,247 @@ class IndicesService:
                 status = "SPARSE_VEGETATION"
         else:
             status = "CALCULATED"
-        
+
         return {
             "index_name": index_name,
             "mean": round(mean_val, 4),
             "min": round(float(np.min(valid_data)), 4),
             "max": round(float(np.max(valid_data)), 4),
             "std": round(float(np.std(valid_data)), 4),
-            "status": status
+            "status": status,
         }
-    
-    async def process_all_indices(
+
+    def process_all_indices(
         self,
         user_id: str,
         farm_id: str,
-        geojson_boundary: dict
+        geojson_boundary: dict,
     ) -> Dict[str, Any]:
-        """
-        Process all available indices for a farm.
-        
-        Args:
-            user_id: User UUID
-            farm_id: Farm UUID
-            geojson_boundary: Farm boundary as GeoJSON
-            
-        Returns:
-            Dictionary with all index results
-        """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+        """Compute and save the latest available index stack for a farm."""
+        scene_inputs = self._load_scene_inputs(geojson_boundary, limit=1)
+        if scene_inputs is None:
+            return {
+                "status": "NO_SATELLITE_DATA",
+                "message": "No satellite imagery found for this location",
+            }
+
+        scene = scene_inputs[0]
+        return self._build_stack_result(user_id, farm_id, scene)
+
+    def build_index_stacks(
+        self,
+        user_id: str,
+        farm_id: str,
+        geojson_boundary: dict,
+        max_scenes: int = 5,
+    ) -> Dict[str, Any]:
+        """Build index stacks for the most recent distinct scene dates for a farm."""
+        scene_inputs = self._load_scene_inputs(geojson_boundary, limit=max_scenes)
+        if scene_inputs is None:
+            return {
+                "status": "NO_SATELLITE_DATA",
+                "message": "No satellite imagery found for this location",
+            }
+
+        stacks = [self._build_stack_result(user_id, farm_id, scene_input) for scene_input in scene_inputs]
+        return {
+            "status": "completed",
+            "farm_id": farm_id,
+            "stacks": stacks,
+        }
+
+    def _load_scene_inputs(self, geojson_boundary: dict, limit: int) -> Optional[list[Dict[str, Any]]]:
+        polygon_geom = shape(geojson_boundary)
+
         if self.use_mock:
-            # Generate mock band data
-            size = (100, 100)
-            nir_band = np.random.uniform(0.3, 0.8, size)
-            red_band = np.random.uniform(0.02, 0.15, size)
-            blue_band = np.random.uniform(0.01, 0.08, size)
-            swir_band = np.random.uniform(0.1, 0.4, size)
-            red_edge_band = np.random.uniform(0.1, 0.3, size)
+            scenes = self._build_mock_scene_inputs(polygon_geom.bounds, limit)
         else:
-            # Fetch from STAC API
             from src.modules.crops.stac_client import get_stac_client
-            
+
             client = get_stac_client(use_mock=False)
-            scenes = client.search_scenes(
+            raw_scenes = client.search_scenes(
                 geometry=geojson_boundary,
                 max_cloud_cover=30.0,
-                limit=1
+                limit=max(limit * 2, limit),
             )
-            
-            if not scenes:
-                return {
-                    "status": "NO_SATELLITE_DATA",
-                    "message": "No satellite imagery found for this location"
+            if not raw_scenes:
+                return None
+
+            scenes = []
+            seen_dates = set()
+            for raw_scene in raw_scenes:
+                scene_day = raw_scene.datetime.date().isoformat() if raw_scene.datetime else raw_scene.id
+                if scene_day in seen_dates:
+                    continue
+                seen_dates.add(scene_day)
+
+                band_bundle = client.load_scene_bands(
+                    raw_scene,
+                    geojson_boundary,
+                    {
+                        "red": raw_scene.red_band_url,
+                        "nir": raw_scene.nir_band_url,
+                        "blue": raw_scene.blue_band_url,
+                        "red_edge": raw_scene.red_edge_band_url,
+                        "swir1": raw_scene.swir1_band_url,
+                    },
+                )
+                if band_bundle is None:
+                    logger.warning("Skipping scene %s because one or more required bands could not be aligned", raw_scene.id)
+                    continue
+
+                scenes.append(
+                    {
+                        "scene_id": raw_scene.id,
+                        "scene_date": raw_scene.datetime or datetime.utcnow(),
+                        "cloud_cover": raw_scene.cloud_cover,
+                        "source": "sentinel-2",
+                        "transform": band_bundle["transform"],
+                        "crs": band_bundle["crs"],
+                        "bands": band_bundle["bands"],
+                    }
+                )
+                if len(scenes) >= limit:
+                    break
+
+        return scenes or None
+
+    def _build_mock_scene_inputs(self, bounds: tuple, limit: int) -> list[Dict[str, Any]]:
+        inputs = []
+        size = (100, 100)
+        transform = from_bounds(*bounds, size[1], size[0])
+        now = datetime.utcnow()
+
+        for offset in range(limit):
+            inputs.append(
+                {
+                    "scene_id": f"mock-scene-{offset + 1}",
+                    "scene_date": now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=offset * 5),
+                    "cloud_cover": float(offset * 3),
+                    "source": "mock",
+                    "transform": transform,
+                    "crs": "EPSG:4326",
+                    "bands": {
+                        "red": np.random.uniform(0.02, 0.15, size).astype(np.float32),
+                        "nir": np.random.uniform(0.35, 0.75, size).astype(np.float32),
+                        "blue": np.random.uniform(0.01, 0.08, size).astype(np.float32),
+                        "red_edge": np.random.uniform(0.10, 0.28, size).astype(np.float32),
+                        "swir1": np.random.uniform(0.08, 0.30, size).astype(np.float32),
+                    },
                 }
-            
-            scene = scenes[0]
-            nir_band = client.stream_and_mask_band(scene.nir_band_url, geojson_boundary)
-            red_band = client.stream_and_mask_band(scene.red_band_url, geojson_boundary)
-            # Note: Additional bands would need to be added to STAC client
-            blue_band = nir_band * 0.1  # Placeholder
-            swir_band = nir_band * 0.5  # Placeholder
-            red_edge_band = nir_band * 0.7  # Placeholder
-        
-        # Calculate all indices
-        ndvi = self._calculate_ndvi(nir_band, red_band)
-        ndwi = self.calculate_ndwi(nir_band, swir_band)
-        evi = self.calculate_evi(nir_band, red_band, blue_band)
-        savi = self.calculate_savi(nir_band, red_band)
-        ndre = self.calculate_ndre(nir_band, red_edge_band)
-        
-        # Get stats for all
-        results = {
-            "farm_id": farm_id,
-            "timestamp": datetime.now().isoformat(),
-            "indices": {
-                "NDVI": self.get_index_stats(ndvi, "NDVI"),
-                "NDWI": self.get_index_stats(ndwi, "NDWI"),
-                "EVI": self.get_index_stats(evi, "EVI"),
-                "SAVI": self.get_index_stats(savi, "SAVI"),
-                "NDRE": self.get_index_stats(ndre, "NDRE"),
-            },
-            "summary": self._generate_summary(ndvi, ndwi, evi),
-            "source": "mock" if self.use_mock else "sentinel-2"
+            )
+
+        return inputs
+
+    def _build_stack_result(self, user_id: str, farm_id: str, scene_input: Dict[str, Any]) -> Dict[str, Any]:
+        bands = scene_input["bands"]
+        index_arrays = self._calculate_indices_parallel(bands)
+        index_stats = {
+            name: self.get_index_stats(index_arrays[name], name)
+            for name in self.INDEX_ORDER
         }
-        
-        return results
-    
-    def _calculate_ndvi(self, nir: np.ndarray, red: np.ndarray) -> np.ndarray:
-        """Calculate NDVI for comparison with other indices."""
-        with np.errstate(divide='ignore', invalid='ignore'):
-            ndvi = (nir.astype(float) - red.astype(float)) / \
-                   (nir.astype(float) + red.astype(float))
-            ndvi = np.where(np.isfinite(ndvi), ndvi, 0)
-        return ndvi
-    
-    def _generate_summary(
-        self,
-        ndvi: np.ndarray,
-        ndwi: np.ndarray,
-        evi: np.ndarray
-    ) -> Dict[str, Any]:
-        """Generate a summary of vegetation and moisture conditions."""
-        ndvi_mean = float(np.nanmean(ndvi))
-        ndwi_mean = float(np.nanmean(ndwi))
-        evi_mean = float(np.nanmean(evi))
-        
-        recommendations = []
-        
-        # Vegetation health
-        if ndvi_mean < 0.3:
-            recommendations.append("Low vegetation detected - consider crop inspection")
-        elif ndvi_mean > 0.6:
-            recommendations.append("Dense healthy vegetation - optimal conditions")
-        
-        # Water stress
-        if ndwi_mean < 0:
-            recommendations.append("Water stress detected - irrigation recommended")
-        elif ndwi_mean > 0.3:
-            recommendations.append("Good moisture levels - no irrigation needed")
-        
-        # EVI for dense areas
-        if evi_mean > 0.5 and ndvi_mean > 0.7:
-            recommendations.append("EVI suggests very dense canopy - consider using EVI for monitoring")
-        
+
+        scene_date = scene_input["scene_date"]
+        timestamp = datetime.utcnow()
+        filename_stub = f"{user_id}_{farm_id}_{scene_date:%Y%m%dT%H%M%S}_stack"
+        stack_path = self.output_dir / f"{filename_stub}.tif"
+
+        self._save_index_stack(
+            index_arrays,
+            scene_input["transform"],
+            scene_input["crs"],
+            stack_path,
+        )
+
         return {
-            "overall_health": "GOOD" if ndvi_mean > 0.4 and ndwi_mean > 0 else "MODERATE" if ndvi_mean > 0.25 else "POOR",
-            "moisture_status": "ADEQUATE" if ndwi_mean > 0 else "STRESSED",
-            "vegetation_density": "HIGH" if evi_mean > 0.4 else "MODERATE" if evi_mean > 0.2 else "LOW",
-            "recommendations": recommendations
+            "farm_id": farm_id,
+            "scene_date": scene_date.isoformat(),
+            "timestamp": timestamp.isoformat(),
+            "indices": index_stats,
+            "summary": self._generate_summary(index_stats),
+            "source": scene_input["source"],
+            "stack_tiff_url": str(stack_path),
+            "band_order": list(self.INDEX_ORDER),
+            "cloud_cover": scene_input["cloud_cover"],
+        }
+
+    def _calculate_indices_parallel(self, bands: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        jobs = {
+            "NDVI": lambda: self.calculate_ndvi(bands["nir"], bands["red"]),
+            "SAVI": lambda: self.calculate_savi(bands["nir"], bands["red"]),
+            "NDMI": lambda: self.calculate_ndmi(bands["nir"], bands["swir1"]),
+            "NDRE": lambda: self.calculate_ndre(bands["nir"], bands["red_edge"]),
+            "EVI": lambda: self.calculate_evi(bands["nir"], bands["red"], bands["blue"]),
+        }
+
+        arrays: Dict[str, np.ndarray] = {}
+        with ThreadPoolExecutor(max_workers=min(self.max_workers, len(jobs))) as executor:
+            future_map = {
+                executor.submit(job): name
+                for name, job in jobs.items()
+            }
+            for future in as_completed(future_map):
+                name = future_map[future]
+                arrays[name] = future.result()
+
+        return arrays
+
+    def _save_index_stack(
+        self,
+        index_arrays: Dict[str, np.ndarray],
+        transform: Any,
+        crs: Any,
+        file_path: Path,
+    ) -> None:
+        first_band = index_arrays[self.INDEX_ORDER[0]]
+        with rasterio.open(
+            file_path,
+            "w",
+            driver="GTiff",
+            height=first_band.shape[0],
+            width=first_band.shape[1],
+            count=len(self.INDEX_ORDER),
+            dtype="float32",
+            crs=crs,
+            transform=transform,
+            compress="lzw",
+        ) as dst:
+            for band_number, band_name in enumerate(self.INDEX_ORDER, start=1):
+                dst.write(index_arrays[band_name].astype(np.float32), band_number)
+                dst.set_band_description(band_number, band_name)
+
+    def _generate_summary(self, index_stats: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        ndvi_mean = index_stats["NDVI"]["mean"]
+        ndmi_mean = index_stats["NDMI"]["mean"]
+        evi_mean = index_stats["EVI"]["mean"]
+
+        recommendations = []
+        if ndvi_mean is not None and ndvi_mean < 0.3:
+            recommendations.append("Low vegetation detected - consider crop inspection")
+        elif ndvi_mean is not None and ndvi_mean > 0.6:
+            recommendations.append("Dense healthy vegetation - optimal conditions")
+
+        if ndmi_mean is not None and ndmi_mean < 0:
+            recommendations.append("Water stress detected - irrigation recommended")
+        elif ndmi_mean is not None and ndmi_mean > 0.2:
+            recommendations.append("Good moisture levels - no irrigation needed")
+
+        if evi_mean is not None and ndvi_mean is not None and evi_mean > 0.5 and ndvi_mean > 0.7:
+            recommendations.append("Very dense canopy detected - track with EVI over the season")
+
+        return {
+            "overall_health": "GOOD" if ndvi_mean is not None and ndmi_mean is not None and ndvi_mean > 0.4 and ndmi_mean > 0 else "MODERATE" if ndvi_mean is not None and ndvi_mean > 0.25 else "POOR",
+            "moisture_status": "ADEQUATE" if ndmi_mean is not None and ndmi_mean > 0 else "STRESSED",
+            "vegetation_density": "HIGH" if evi_mean is not None and evi_mean > 0.4 else "MODERATE" if evi_mean is not None and evi_mean > 0.2 else "LOW",
+            "recommendations": recommendations,
         }
 
 
-# Singleton instance
-_indices_service: Optional[IndicesService] = None
+_indices_services: Dict[bool, IndicesService] = {}
 
 
-def get_indices_service(use_mock: bool = True) -> IndicesService:
-    """Get or create indices service singleton."""
-    global _indices_service
-    if _indices_service is None:
-        _indices_service = IndicesService(use_mock=use_mock)
-    return _indices_service
+def get_indices_service(use_mock: bool = False) -> IndicesService:
+    """Get or create an indices service keyed by mock mode."""
+    if use_mock not in _indices_services:
+        _indices_services[use_mock] = IndicesService(use_mock=use_mock)
+    return _indices_services[use_mock]
