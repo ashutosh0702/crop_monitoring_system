@@ -24,8 +24,8 @@ class User(Base):
     full_name = Column(String(100), nullable=False)
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     
     # Relationships
     farms = relationship("Farm", back_populates="owner", cascade="all, delete-orphan")
@@ -50,8 +50,9 @@ class Farm(Base):
     boundary = Column(Geometry(geometry_type="POLYGON", srid=4326), nullable=False)
     
     area_acres = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_analyzed_date = Column(DateTime, nullable=True)  # Track for forward fill efficiency
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     
     # Relationships
     owner = relationship("User", back_populates="farms")

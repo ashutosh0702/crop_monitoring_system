@@ -2,6 +2,7 @@
 Farm management router with threaded NDVI execution.
 """
 
+from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -31,21 +32,42 @@ async def add_field_and_analyze(
 ):
     """
     Create a new farm field and run its initial NDVI analysis.
+    
+    Flow:
+    1. Create farm record in DB
+    2. Run immediate NDVI analysis (latest scene) — SYNC, ~5-30 sec
+    3. Attach analysis results
+    4. Enqueue backfill task to compute historical indices — ASYNC, 5-10 min
     """
     farm_service = services.FarmService(db)
     new_farm = farm_service.create_field(str(current_user.id), field)
     farm_id = str(new_farm.id)
 
+    # 1. Immediate NDVI analysis (latest scene only)
     analysis_results = await run_in_threadpool(
         ndvi_engine.process_field_ndvi,
         str(current_user.id),
         farm_id,
         field.boundary.model_dump(),
     )
-    return farm_service.attach_analysis(
+    response = farm_service.attach_analysis(
         field_id=farm_id,
         analysis_results=analysis_results,
     )
+    
+    # 2. Enqueue backfill task (planting_date → today) for historical indices
+    # This happens in background; farmer sees immediate NDVI while backfill happens
+    if field.planting_date:
+        from src.tasks import build_index_stacks_task
+        build_index_stacks_task.delay(
+            farm_id=farm_id,
+            user_id=str(current_user.id),
+            boundary_geojson=field.boundary.model_dump(),
+            start_date=field.planting_date.isoformat(),
+            end_date=datetime.now().isoformat(),
+        )
+    
+    return response
 
 
 @router.get("/", response_model=List[schemas.FieldResponse])

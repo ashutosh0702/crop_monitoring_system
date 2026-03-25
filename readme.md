@@ -64,9 +64,6 @@ A comprehensive agricultural monitoring platform that enables farmers to:
 git clone <repository-url>
 cd crop_monitoring_system
 
-# Copy environment template
-cp .env.example .env
-```
 
 ### 2. Start Services
 
@@ -164,31 +161,7 @@ crop_monitoring_system/
 
 ---
 
-## ⚙️ Configuration
 
-Environment variables (`.env`):
-
-```env
-# Database
-DATABASE_URL=postgresql://user:pass@db:5432/crop_monitoring
-
-# Redis (Celery broker)
-REDIS_URL=redis://redis:6379/0
-
-# Security
-SECRET_KEY=your-super-secret-key
-
-# AWS S3 (optional - for production)
-AWS_ACCESS_KEY_ID=placeholder
-AWS_SECRET_ACCESS_KEY=placeholder
-AWS_S3_BUCKET=crop-monitoring-tiffs
-AWS_REGION=ap-south-1
-
-# External APIs
-OPENWEATHERMAP_API_KEY=placeholder
-```
-
----
 
 ## 🛠️ Development
 
@@ -243,26 +216,7 @@ This system uses **free Sentinel-2 imagery** via the [STAC API](https://stacspec
   - B08 (NIR) - 10m resolution
   - B03 (Green) - for false color composites
 
-### Mock Mode
 
-For local development without internet access, the system falls back to mock data:
-
-```python
-# In ndvi_service.py
-ndvi_engine = NDVILogic(use_mock=True)  # Uses random synthetic data
-```
-
----
-
-## 📊 NDVI Classification
-
-| NDVI Range | Status | Description |
-|------------|--------|-------------|
-| ≥ 0.50 | 🟢 HEALTHY | Dense, healthy vegetation |
-| 0.25 - 0.49 | 🟡 MODERATE | Sparse vegetation or stress |
-| < 0.25 | 🔴 CRITICAL | Bare soil, water, or dead plants |
-
----
 
 ## 🐳 Docker Commands
 
@@ -289,36 +243,7 @@ docker compose exec db psql -U user -d crop_monitoring
 
 ---
 
-## 🗺️ Roadmap
 
-### ✅ Phase 0: Infrastructure (Complete)
-- [x] PostgreSQL + PostGIS database
-- [x] Celery + Redis task queue
-- [x] Docker Compose orchestration
-- [x] Alembic migrations
-
-### ✅ Phase 1: Satellite Integration (Complete)
-- [x] STAC API client for Sentinel-2
-- [x] Rasterio COG streaming
-- [x] NDVI calculation
-- [x] False color PNG composites
-
-### 🔄 Phase 2: Advanced Indices (Planned)
-- [ ] NDWI (Water Index)
-- [ ] EVI (Enhanced Vegetation Index)
-- [ ] Soil data integration
-
-### 📋 Phase 3: Monitoring (Planned)
-- [ ] Automated scan scheduling
-- [ ] Alert notifications
-- [ ] Weather integration
-
-### ☁️ AWS Deployment (Planned)
-- [ ] Lambda + API Gateway
-- [ ] RDS PostgreSQL
-- [ ] S3 for file storage
-
----
 
 ## 📄 License
 

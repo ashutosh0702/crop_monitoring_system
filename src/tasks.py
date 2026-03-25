@@ -81,8 +81,10 @@ def build_index_stacks_task(
     user_id: str,
     boundary_geojson: dict,
     max_scenes: int = 5,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build and persist a stack of vegetation indices for recent scene dates."""
+    """Build and persist a stack of vegetation indices for recent scene dates or a date range."""
     task_id = self.request.id
     logger.info("Starting index stack task %s for farm %s", task_id, farm_id)
 
@@ -91,12 +93,40 @@ def build_index_stacks_task(
         from src.modules.crops.stack_service import CropIndexStackService
 
         indices_service = get_indices_service(use_mock=settings.SATELLITE_USE_MOCK_DATA)
-        result = indices_service.build_index_stacks(
-            user_id=user_id,
-            farm_id=farm_id,
-            geojson_boundary=boundary_geojson,
-            max_scenes=max_scenes,
-        )
+
+        if start_date is not None and end_date is not None:
+            from datetime import datetime as _dt
+
+            try:
+                start_dt = _dt.fromisoformat(start_date) if isinstance(start_date, str) else start_date
+                end_dt = _dt.fromisoformat(end_date) if isinstance(end_date, str) else end_date
+            except Exception:
+                start_dt = None
+                end_dt = None
+
+            if start_dt and end_dt:
+                result = indices_service.build_daily_stacks(
+                    user_id=user_id,
+                    farm_id=farm_id,
+                    geojson_boundary=boundary_geojson,
+                    start_date=start_dt,
+                    end_date=end_dt,
+                )
+            else:
+                result = indices_service.build_index_stacks(
+                    user_id=user_id,
+                    farm_id=farm_id,
+                    geojson_boundary=boundary_geojson,
+                    max_scenes=max_scenes,
+                )
+        else:
+            result = indices_service.build_index_stacks(
+                user_id=user_id,
+                farm_id=farm_id,
+                geojson_boundary=boundary_geojson,
+                max_scenes=max_scenes,
+            )
+
         if result.get("status") == "NO_SATELLITE_DATA":
             return result
 

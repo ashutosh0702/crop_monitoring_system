@@ -13,6 +13,7 @@ alembic  # Database migrations
 # Task Queue
 celery[redis]
 redis
+apscheduler  # Background scheduling (MVP), migrate to Celery Beat at scale
 
 # Security
 python-jose[cryptography]

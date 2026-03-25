@@ -154,7 +154,51 @@ class IndicesService:
             "stacks": stacks,
         }
 
-    def _load_scene_inputs(self, geojson_boundary: dict, limit: int) -> Optional[list[Dict[str, Any]]]:
+    def build_daily_stacks(
+        self,
+        user_id: str,
+        farm_id: str,
+        geojson_boundary: dict,
+        start_date,
+        end_date,
+    ) -> Dict[str, Any]:
+        """Build a stack for each day in a date range using the best available scene on that day."""
+        from datetime import timedelta
+
+        date = start_date
+        buffers = []
+        while date <= end_date:
+            next_day = date + timedelta(days=1)
+            scene_inputs = self._load_scene_inputs(
+                geojson_boundary,
+                limit=1,
+                start_date=date,
+                end_date=next_day,
+            )
+            if scene_inputs:
+                stack = self._build_stack_result(user_id, farm_id, scene_inputs[0])
+                buffers.append(stack)
+            date = next_day
+
+        if not buffers:
+            return {
+                "status": "NO_SATELLITE_DATA",
+                "message": "No satellite imagery found in the requested date range",
+            }
+
+        return {
+            "status": "completed",
+            "farm_id": farm_id,
+            "stacks": buffers,
+        }
+
+    def _load_scene_inputs(
+        self,
+        geojson_boundary: dict,
+        limit: int,
+        start_date=None,
+        end_date=None,
+    ) -> Optional[list[Dict[str, Any]]]:
         polygon_geom = shape(geojson_boundary)
 
         if self.use_mock:
@@ -165,6 +209,8 @@ class IndicesService:
             client = get_stac_client(use_mock=False)
             raw_scenes = client.search_scenes(
                 geometry=geojson_boundary,
+                start_date=start_date,
+                end_date=end_date,
                 max_cloud_cover=30.0,
                 limit=max(limit * 2, limit),
             )

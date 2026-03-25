@@ -21,9 +21,17 @@ async def lifespan(app: FastAPI):
     print(f"📊 Database: {settings.DATABASE_URL.split('@')[-1]}")  # Hide credentials
     print(f"📦 Storage: {'S3' if settings.use_s3 else 'Local filesystem'}")
     
+    # Start APScheduler for forward fill and monitoring
+    from src.scheduler import init_scheduler, shutdown_scheduler
+    try:
+        init_scheduler()
+    except Exception as exc:
+        print(f"⚠️  Failed to start scheduler: {exc}")
+    
     yield
     
     # Shutdown
+    shutdown_scheduler()
     print("🛑 Shutting down...")
 
 
@@ -31,7 +39,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.PROJECT_VERSION,
-    description="Agricultural monitoring API with NDVI analysis and geospatial features",
+    description="Agricultural monitoring API with remote sensing analysis and geospatial features",
     lifespan=lifespan,
 )
 

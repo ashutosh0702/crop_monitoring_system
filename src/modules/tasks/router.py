@@ -149,3 +149,13 @@ def get_active_tasks(
             )
 
     return tasks
+
+
+@router.get("/scheduler/status")
+def get_scheduler_status():
+    """
+    Get APScheduler status and scheduled jobs.
+    Useful for monitoring forward fill and alert jobs.
+    """
+    from src.scheduler import get_scheduler_status
+    return get_scheduler_status()

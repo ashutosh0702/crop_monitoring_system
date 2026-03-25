@@ -14,7 +14,7 @@ from pystac_client import Client as STACClient
 from rasterio.enums import Resampling
 from rasterio.mask import mask
 from rasterio.transform import from_bounds
-from rasterio.warp import reproject
+from rasterio.warp import reproject, transform_geom
 from shapely.geometry import mapping, shape
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,11 @@ class STACImageryClient:
                 CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif",
             ):
                 with rasterio.open(band_url) as src:
-                    geom = shape(geometry)
+                    # Transform geometry from EPSG:4326 to the band's CRS for proper intersection
+                    geom_transformed = transform_geom('EPSG:4326', src.crs, geometry)
+                    geom = shape(geom_transformed)
+                    logger.debug("Transformed geometry from EPSG:4326 to %s for band masking", src.crs)
+                    
                     out_image, out_transform = mask(
                         src,
                         [mapping(geom)],
