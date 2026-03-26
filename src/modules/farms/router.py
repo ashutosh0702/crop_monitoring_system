@@ -3,9 +3,10 @@ Farm management router with threaded NDVI execution.
 """
 
 from datetime import datetime
-from typing import List
+import hashlib
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
@@ -20,7 +21,7 @@ from src.modules.crops.ndvi_service import NDVILogic
 from . import schemas, services
 
 router = APIRouter(prefix="/fields", tags=["Farms"])
-
+print(settings.SATELLITE_USE_MOCK_DATA, "Using mock satellite data for development")  # Debug log
 ndvi_engine = NDVILogic(use_mock=settings.SATELLITE_USE_MOCK_DATA)
 
 
@@ -70,8 +71,13 @@ async def add_field_and_analyze(
     return response
 
 
-@router.get("/", response_model=List[schemas.FieldResponse])
+@router.get("/", response_model=schemas.PaginatedFarmResponse)
 def get_fields(
+    request: Request,
+    response: Response,
+    skip: int = 0,
+    limit: int = 100,
+    updated_since: Optional[datetime] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -79,7 +85,32 @@ def get_fields(
     Get all farms owned by the current user with only their latest analysis.
     """
     farm_service = services.FarmService(db)
-    return farm_service.get_my_fields(str(current_user.id))
+    items, total = farm_service.get_my_fields(
+        user_id=str(current_user.id),
+        skip=skip,
+        limit=limit,
+        updated_since=updated_since,
+    )
+    
+    etag_str = f"{total}-{skip}-{limit}-{updated_since}"
+    for item in items:
+        latest = item.get("latest_analysis")
+        ts = latest.get("stats", {}).get("timestamp", "") if latest else ""
+        etag_str += f"-{item['id']}-{ts}"
+        
+    etag = hashlib.md5(etag_str.encode()).hexdigest()
+    
+    if request.headers.get("If-None-Match") == etag:
+        raise HTTPException(status_code=status.HTTP_304_NOT_MODIFIED)
+        
+    response.headers["ETag"] = etag
+    
+    return schemas.PaginatedFarmResponse(
+        items=items,
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.get("/{farm_id}/history", response_model=List[schemas.NDVIAnalysis])

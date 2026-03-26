@@ -19,7 +19,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./data:/app/data # Local TIFF/PNG storage
-      - ./src:/app/src:ro # Mount source for hot-reload in dev
+      - ./src:/app/src # Mount source for hot-reload in dev
+      - ./alembic:/app/alembic # Mount Alembic for migrations
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - crop_network
@@ -85,24 +86,6 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    networks:
-      - crop_network
-
-  # Titiler - dynamic tile server for NDVI GeoTIFF overlays in the dashboard
-  titiler:
-    image: ghcr.io/developmentseed/titiler:latest
-    container_name: crop_monitoring_titiler
-    ports:
-      - "8080:8080"
-    environment:
-      - PORT=8080
-      - HOST=0.0.0.0
-      - WORKERS_PER_CORE=1
-      - MAX_WORKERS=4
-      # CORS: allow dashboard dev server
-      - TITILER_API_CORS_ORIGINS=http://localhost:5173,http://localhost:3000
-    volumes:
-      - ./data:/data:ro # Mount NDVI GeoTIFFs read-only
     networks:
       - crop_network
 

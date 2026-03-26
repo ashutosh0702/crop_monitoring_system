@@ -90,7 +90,18 @@ class NDVIMetadata(BaseModel):
 class NDVIAnalysis(BaseModel):
     """Complete NDVI analysis result."""
     tiff_url: str
-    png_url: Optional[str] = "placeholder"  # False color composite
+    png_url: Optional[str] = "placeholder"  # Colorized NDVI PNG path/URL
+    png_data_url: Optional[str] = None
+    bbox: Optional[List[float]] = None
+    stats: NDVIStats
+    metadata: Optional[NDVIMetadata] = None
+
+
+class NDVIAnalysisSummary(BaseModel):
+    """Summarized NDVI analysis result for lists."""
+    tiff_url: str
+    png_url: Optional[str] = "placeholder"
+    bbox: Optional[List[float]] = None
     stats: NDVIStats
     metadata: Optional[NDVIMetadata] = None
 
@@ -109,3 +120,26 @@ class FieldResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class FieldSummaryResponse(BaseModel):
+    """Lightweight API response for a farm field in lists."""
+    id: str
+    owner_id: str
+    name: str
+    boundary: dict  # GeoJSON
+    crop_type: Optional[str] = None
+    planting_date: Optional[datetime] = None
+    area_acres: float
+    latest_analysis: Optional[NDVIAnalysisSummary] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class PaginatedFarmResponse(BaseModel):
+    """Paginated list of farm fields."""
+    items: List[FieldSummaryResponse]
+    total: int
+    skip: int
+    limit: int

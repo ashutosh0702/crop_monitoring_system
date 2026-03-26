@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import uuid
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from src.models import CropIndexStack
 
@@ -71,14 +72,43 @@ class CropIndexStackService:
                 id=uuid.uuid4(),
                 farm_id=farm_uuid,
                 scene_date=scene_date,
+                stack_tiff_url=stack_payload["stack_tiff_url"],
+                indices=stack_payload["indices"],
+                band_order=stack_payload["band_order"],
+                satellite_source=source,
+                cloud_cover=stack_payload.get("cloud_cover"),
             )
-            self.db.add(stack)
+            try:
+                self.db.add(stack)
+                self.db.flush()
+            except IntegrityError:
+                self.db.rollback()
+                # Record was inserted concurrently, query again
+                stack = (
+                    self.db.query(CropIndexStack)
+                    .filter(
+                        CropIndexStack.farm_id == farm_uuid,
+                        CropIndexStack.scene_date == scene_date,
+                        CropIndexStack.satellite_source == source,
+                    )
+                    .first()
+                )
+                if stack is None:
+                    raise  # Should not happen
+                # Update the existing record
+                stack.stack_tiff_url = stack_payload["stack_tiff_url"]
+                stack.indices = stack_payload["indices"]
+                stack.band_order = stack_payload["band_order"]
+                stack.satellite_source = source
+                stack.cloud_cover = stack_payload.get("cloud_cover")
+        else:
+            # Update existing
+            stack.stack_tiff_url = stack_payload["stack_tiff_url"]
+            stack.indices = stack_payload["indices"]
+            stack.band_order = stack_payload["band_order"]
+            stack.satellite_source = source
+            stack.cloud_cover = stack_payload.get("cloud_cover")
 
-        stack.stack_tiff_url = stack_payload["stack_tiff_url"]
-        stack.indices = stack_payload["indices"]
-        stack.band_order = stack_payload["band_order"]
-        stack.satellite_source = source
-        stack.cloud_cover = stack_payload.get("cloud_cover")
         return stack
 
     def _parse_datetime(self, value: Any) -> datetime:

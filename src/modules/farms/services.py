@@ -97,32 +97,42 @@ class FarmService:
             # Fallback: rough approximation
             return 2.5
 
-    def get_my_fields(self, user_id: str) -> List[Dict[str, Any]]:
+    def get_my_fields(
+        self,
+        user_id: str,
+        skip: int = 0,
+        limit: int = 100,
+        updated_since: Optional[datetime] = None,
+    ) -> tuple[List[Dict[str, Any]], int]:
         """
-        Get all farms owned by a user with their latest analysis.
+        Get all farms owned by a user with their latest analysis (paginated).
         
         Args:
             user_id: UUID of the owner
             
         Returns:
-            List of farm dictionaries with analysis data
+            Tuple of (List of farm dictionaries, total count)
         """
-        farms = (
-            self.db.query(Farm)
-            .filter(Farm.owner_id == user_id)
-            .order_by(Farm.created_at.desc())
-            .all()
-        )
+        query = self.db.query(Farm).filter(Farm.owner_id == user_id)
+        
+        if updated_since:
+            query = query.filter(Farm.updated_at >= updated_since)
+            
+        total = query.count()
+        farms = query.order_by(Farm.created_at.desc()).offset(skip).limit(limit).all()
+        
         latest_analysis_map = self._get_latest_analysis_map([farm.id for farm in farms])
 
-        return [
+        items = [
             self._farm_to_dict(
                 farm,
                 latest_analysis=latest_analysis_map.get(farm.id),
                 include_history=False,
+                include_payload=True,
             )
             for farm in farms
         ]
+        return items, total
     
     def get_field_by_id(self, farm_id: str, user_id: str) -> Optional[Farm]:
         """Get a specific farm by ID, ensuring ownership."""
@@ -184,18 +194,20 @@ class FarmService:
         farm: Farm,
         latest_analysis: Optional[NDVIAnalysis] = None,
         include_history: bool = True,
+        include_payload: bool = True,
     ) -> Dict[str, Any]:
         """Convert Farm model to dictionary for API response."""
         # Convert PostGIS geometry to GeoJSON
         shapely_geom = to_shape(farm.boundary)
         boundary_geojson = mapping(shapely_geom)
+        bbox = list(shapely_geom.bounds)
         
         # Get latest analysis
         latest = latest_analysis if latest_analysis is not None else farm.latest_analysis
-        latest_dict = latest.to_dict() if latest else None
+        latest_dict = latest.to_dict(include_payload=include_payload, bbox=bbox) if latest else None
         
         # Get analysis history
-        history = [a.to_dict() for a in farm.analyses] if include_history and farm.analyses else []
+        history = [a.to_dict(include_payload=include_payload, bbox=bbox) for a in farm.analyses] if include_history and farm.analyses else []
         
         return {
             "id": str(farm.id),

@@ -22,93 +22,93 @@ DEMO_FARMS = [
     {
         "name": "Amritsar Wheat Field North",
         "crop_type": "wheat",
-        "planting_date": "2025-11-15T00:00:00",
+        "planting_date": "2026-02-15T00:00:00",
         "boundary": {
             "type": "Polygon",
             "coordinates": [[
-                [74.8723, 31.6340],
-                [74.8785, 31.6340],
-                [74.8785, 31.6390],
-                [74.8723, 31.6390],
-                [74.8723, 31.6340],
+                [75.61979133262437, 30.27158327609321],
+                [75.61977758919971, 30.270479411124185],
+                [75.62122064876687, 30.270479411124185],
+                [75.62122752047921, 30.27157140664329],
+                [75.61979133262437, 30.27158327609321]
             ]]
         }
     },
     {
         "name": "Ludhiana Rice Paddy East",
         "crop_type": "rice",
-        "planting_date": "2025-06-10T00:00:00",
+        "planting_date": "2026-03-10T00:00:00",
         "boundary": {
             "type": "Polygon",
             "coordinates": [[
-                [75.8573, 30.9000],
-                [75.8640, 30.9000],
-                [75.8640, 30.9055],
-                [75.8573, 30.9055],
-                [75.8573, 30.9000],
+                [75.62120003362983, 30.269375533743045],
+                [75.62117941849394, 30.26746449086599],
+                [75.62253314580184, 30.267428881018773],
+                [75.62260186292411, 30.269357729167126],
+                [75.62120003362983, 30.269375533743045]
             ]]
         }
     },
-    {
-        "name": "Nashik Cotton Plot A",
-        "crop_type": "cotton",
-        "planting_date": "2025-07-01T00:00:00",
-        "boundary": {
-            "type": "Polygon",
-            "coordinates": [[
-                [73.7908, 19.9975],
-                [73.7975, 19.9975],
-                [73.7975, 20.0035],
-                [73.7908, 20.0035],
-                [73.7908, 19.9975],
-            ]]
-        }
-    },
-    {
-        "name": "Pune Sugarcane Block 3",
-        "crop_type": "sugarcane",
-        "planting_date": "2025-02-20T00:00:00",
-        "boundary": {
-            "type": "Polygon",
-            "coordinates": [[
-                [73.8567, 18.5204],
-                [73.8630, 18.5204],
-                [73.8630, 18.5260],
-                [73.8567, 18.5260],
-                [73.8567, 18.5204],
-            ]]
-        }
-    },
-    {
-        "name": "Patiala Corn Field West",
-        "crop_type": "corn",
-        "planting_date": "2025-05-15T00:00:00",
-        "boundary": {
-            "type": "Polygon",
-            "coordinates": [[
-                [76.3869, 30.3398],
-                [76.3930, 30.3398],
-                [76.3930, 30.3450],
-                [76.3869, 30.3450],
-                [76.3869, 30.3398],
-            ]]
-        }
-    },
-    {
-        "name": "Jalandhar Wheat South",
-        "crop_type": "wheat",
-        "planting_date": "2025-11-20T00:00:00",
-        "boundary": {
-            "type": "Polygon",
-            "coordinates": [[
-                [75.5762, 31.3260],
-                [75.5825, 31.3260],
-                [75.5825, 31.3310],
-                [75.5762, 31.3310],
-                [75.5762, 31.3260],
-            ]]
-        }
-    },
+    # {
+    #     "name": "Nashik Cotton Plot A",
+    #     "crop_type": "cotton",
+    #     "planting_date": "2025-12-31T00:00:00",
+    #     "boundary": {
+    #         "type": "Polygon",
+    #         "coordinates": [[
+    #             [73.7908, 19.9975],
+    #             [73.7975, 19.9975],
+    #             [73.7975, 20.0035],
+    #             [73.7908, 20.0035],
+    #             [73.7908, 19.9975],
+    #         ]]
+    #     }
+    # },
+    # {
+    #     "name": "Pune Sugarcane Block 3",
+    #     "crop_type": "sugarcane",
+    #     "planting_date": "2025-02-20T00:00:00",
+    #     "boundary": {
+    #         "type": "Polygon",
+    #         "coordinates": [[
+    #             [73.8567, 18.5204],
+    #             [73.8630, 18.5204],
+    #             [73.8630, 18.5260],
+    #             [73.8567, 18.5260],
+    #             [73.8567, 18.5204],
+    #         ]]
+    #     }
+    # },
+    # {
+    #     "name": "Patiala Corn Field West",
+    #     "crop_type": "corn",
+    #     "planting_date": "2025-05-15T00:00:00",
+    #     "boundary": {
+    #         "type": "Polygon",
+    #         "coordinates": [[
+    #             [76.3869, 30.3398],
+    #             [76.3930, 30.3398],
+    #             [76.3930, 30.3450],
+    #             [76.3869, 30.3450],
+    #             [76.3869, 30.3398],
+    #         ]]
+    #     }
+    # },
+    # {
+    #     "name": "Jalandhar Wheat South",
+    #     "crop_type": "wheat",
+    #     "planting_date": "2025-11-20T00:00:00",
+    #     "boundary": {
+    #         "type": "Polygon",
+    #         "coordinates": [[
+    #             [75.5762, 31.3260],
+    #             [75.5825, 31.3260],
+    #             [75.5825, 31.3310],
+    #             [75.5762, 31.3310],
+    #             [75.5762, 31.3260],
+    #         ]]
+    #     }
+    # },
 ]
 
 
@@ -141,7 +141,8 @@ def seed():
     print(f"   ✅ JWT obtained")
 
     # 3. Get existing farms to avoid duplicates
-    existing = requests.get(f"{BASE_URL}/fields/", headers=headers).json()
+    response_data = requests.get(f"{BASE_URL}/fields/", headers=headers).json()
+    existing = response_data.get("items", [])
     existing_names = {f["name"] for f in existing}
     print(f"\n3. Found {len(existing)} existing farms")
 

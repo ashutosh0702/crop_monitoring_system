@@ -65,6 +65,7 @@ def process_ndvi_task(self, farm_id: str, user_id: str, boundary_geojson: dict) 
                 "results": {
                     "tiff_url": result["tiff_url"],
                     "png_url": result.get("png_url"),
+                    "png_data_url": result.get("png_data_url"),
                     "mean_ndvi": stats.get("mean_ndvi"),
                     "status": stats.get("status"),
                 },

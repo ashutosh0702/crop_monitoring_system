@@ -7,10 +7,12 @@ from datetime import datetime
 from typing import Optional
 import uuid
 
-from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraint
+from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship, declarative_base
 from geoalchemy2 import Geometry
+
+from src.core.utils import file_to_data_url
 
 Base = declarative_base()
 
@@ -24,8 +26,8 @@ class User(Base):
     full_name = Column(String(100), nullable=False)
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     
     # Relationships
     farms = relationship("Farm", back_populates="owner", cascade="all, delete-orphan")
@@ -50,9 +52,9 @@ class Farm(Base):
     boundary = Column(Geometry(geometry_type="POLYGON", srid=4326), nullable=False)
     
     area_acres = Column(Float, nullable=True)
-    last_analyzed_date = Column(DateTime, nullable=True)  # Track for forward fill efficiency
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    last_analyzed_date = Column(DateTime, nullable=True, index=True)  # Track for forward fill efficiency
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     
     # Relationships
     owner = relationship("User", back_populates="farms")
@@ -84,7 +86,7 @@ class NDVIAnalysis(Base):
     
     # File URLs - local path or S3 URL
     tiff_url = Column(Text, nullable=False)
-    png_url = Column(Text, nullable=True, default="placeholder")  # False color composite
+    png_url = Column(Text, nullable=True, default="placeholder")  # Colorized NDVI preview
     
     # NDVI Statistics
     mean_ndvi = Column(Float, nullable=False)
@@ -100,7 +102,7 @@ class NDVIAnalysis(Base):
     scene_date = Column(DateTime, nullable=True)  # Date of satellite imagery
     cloud_cover = Column(Float, nullable=True)  # Percentage cloud cover
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=func.now())
     
     # Relationships
     farm = relationship("Farm", back_populates="analyses")
@@ -108,12 +110,13 @@ class NDVIAnalysis(Base):
     def __repr__(self):
         return f"<NDVIAnalysis(id={self.id}, mean_ndvi={self.mean_ndvi}, status={self.status})>"
     
-    def to_dict(self) -> dict:
+    def to_dict(self, include_payload: bool = True, bbox: Optional[list] = None) -> dict:
         """Convert to dictionary for API responses."""
-        return {
+        res = {
             "id": str(self.id),
             "tiff_url": self.tiff_url,
             "png_url": self.png_url,
+            "bbox": bbox,
             "stats": {
                 "mean_ndvi": round(self.mean_ndvi, 3) if self.mean_ndvi is not None else None,
                 "min_ndvi": round(self.min_ndvi, 3) if self.min_ndvi is not None else None,
@@ -128,6 +131,9 @@ class NDVIAnalysis(Base):
                 "cloud_cover": round(self.cloud_cover, 3) if self.cloud_cover is not None else None,
             },
         }
+        if include_payload:
+            res["png_data_url"] = file_to_data_url(self.png_url, "image/png")
+        return res
 
 
 class Alert(Base):
@@ -142,7 +148,7 @@ class Alert(Base):
     message = Column(Text, nullable=False)
     
     is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=func.now())
     
     # Relationship
     farm = relationship("Farm")
@@ -170,8 +176,8 @@ class CropIndexStack(Base):
     satellite_source = Column(String(50), nullable=False, default="sentinel-2")
     cloud_cover = Column(Float, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     farm = relationship("Farm", back_populates="index_stacks")
 
@@ -214,3 +220,33 @@ class CropIndexStack(Base):
             "vegetation_density": "HIGH" if evi_mean is not None and evi_mean > 0.4 else "MODERATE" if evi_mean is not None and evi_mean > 0.2 else "LOW",
             "recommendations": recommendations,
         }
+
+
+class STACSceneCache(Base):
+    """Cached Sentinel-2 scene footprints and band URLs."""
+    __tablename__ = "stac_scene_cache"
+    
+    id = Column(String(100), primary_key=True)  # Scene ID e.g., S2A_...
+    geom = Column(Geometry(geometry_type="POLYGON", srid=4326), nullable=False)
+    datetime = Column(DateTime, nullable=False, index=True)
+    cloud_cover = Column(Float, nullable=False)
+    assets = Column(JSON, nullable=False)  # URLs (red, nir, blue, etc.)
+    created_at = Column(DateTime, default=func.now())
+    
+    def __repr__(self):
+        return f"<STACSceneCache(id={self.id}, datetime={self.datetime})>"
+
+
+class STACSearchRegion(Base):
+    """Regions that have already been queried against Earth Search API."""
+    __tablename__ = "stac_search_regions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    geom = Column(Geometry(geometry_type="POLYGON", srid=4326), nullable=False)
+    start_date = Column(DateTime, nullable=False)
+    end_date = Column(DateTime, nullable=False)
+    max_cloud_cover = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    
+    def __repr__(self):
+        return f"<STACSearchRegion(start={self.start_date}, end={self.end_date})>"

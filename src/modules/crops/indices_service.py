@@ -14,6 +14,7 @@ from rasterio.transform import from_bounds
 from shapely.geometry import shape
 
 from src.config import settings
+from src.modules.crops.stac_client import group_scenes_by_day
 
 logger = logging.getLogger(__name__)
 
@@ -212,39 +213,42 @@ class IndicesService:
                 start_date=start_date,
                 end_date=end_date,
                 max_cloud_cover=30.0,
-                limit=max(limit * 2, limit),
+                limit=max(limit * 8, limit),
             )
             if not raw_scenes:
                 return None
 
             scenes = []
-            seen_dates = set()
-            for raw_scene in raw_scenes:
-                scene_day = raw_scene.datetime.date().isoformat() if raw_scene.datetime else raw_scene.id
-                if scene_day in seen_dates:
-                    continue
-                seen_dates.add(scene_day)
-
-                band_bundle = client.load_scene_bands(
-                    raw_scene,
+            for scene_group in group_scenes_by_day(raw_scenes):
+                band_bundle = client.load_scene_group_bands(
+                    scene_group,
                     geojson_boundary,
-                    {
-                        "red": raw_scene.red_band_url,
-                        "nir": raw_scene.nir_band_url,
-                        "blue": raw_scene.blue_band_url,
-                        "red_edge": raw_scene.red_edge_band_url,
-                        "swir1": raw_scene.swir1_band_url,
-                    },
+                    ["red", "nir", "blue", "red_edge", "swir1"],
                 )
                 if band_bundle is None:
-                    logger.warning("Skipping scene %s because one or more required bands could not be aligned", raw_scene.id)
+                    scene_ids = ",".join(scene.id for scene in scene_group)
+                    logger.warning(
+                        "Skipping scene group %s because one or more required bands could not be aligned",
+                        scene_ids,
+                    )
                     continue
+
+                scene_datetimes = [
+                    scene.datetime
+                    for scene in scene_group
+                    if scene.datetime is not None
+                ]
+                cloud_values = [
+                    scene.cloud_cover
+                    for scene in scene_group
+                    if scene.cloud_cover is not None
+                ]
 
                 scenes.append(
                     {
-                        "scene_id": raw_scene.id,
-                        "scene_date": raw_scene.datetime or datetime.utcnow(),
-                        "cloud_cover": raw_scene.cloud_cover,
+                        "scene_id": "+".join(scene.id for scene in scene_group),
+                        "scene_date": max(scene_datetimes) if scene_datetimes else datetime.utcnow(),
+                        "cloud_cover": float(np.mean(cloud_values)) if cloud_values else None,
                         "source": "sentinel-2",
                         "transform": band_bundle["transform"],
                         "crs": band_bundle["crs"],

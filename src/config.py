@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     
     # Paths
     BASE_DIR: Path = Path(__file__).resolve().parent.parent
-    TIFF_STORAGE_PATH: Path = BASE_DIR / "data" / "ndvi_tiffs"
-    PNG_STORAGE_PATH: Path = BASE_DIR / "data" / "false_color"
+    TIFF_STORAGE_PATH: Path = BASE_DIR / "data" / "tiffs"
+    PNG_STORAGE_PATH: Path = BASE_DIR / "data" / "ndvi_previews"
     INDEX_STACK_STORAGE_PATH: Path = BASE_DIR / "data" / "index_stacks"
 
     # Legacy - for backward compatibility during migration
